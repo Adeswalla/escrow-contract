@@ -19,6 +19,8 @@ mod admin_pause_escrow_tests;
 mod admin_resume_escrow_footprint_tests;
 #[path = "admin_tax_withholding_guards_tests.rs"]
 mod admin_tax_withholding_guards_tests;
+#[path = "admin_transfer_target_tests.rs"]
+mod admin_transfer_target_tests;
 #[path = "arbitration_split_event_tests.rs"]
 mod arbitration_split_event_tests;
 #[path = "emergency_pause_split_refund_tests.rs"]
@@ -221,9 +223,43 @@ impl ReentrantToken {
     }
 }
 
+/// `setup_funded_escrow` without the final `fund`: the escrow is initialised
+/// and the client holds the tokens, but nothing has been deposited yet. The
+/// admin-only yield setter is only open in this state (issue #776).
+pub(crate) fn setup_unfunded_escrow(
+    env: &Env,
+    milestone_amounts: soroban_sdk::Vec<i128>,
+) -> (
+    Address,
+    Address,
+    Address,
+    Address,
+    Address,
+    soroban_sdk::Address,
+    MilestoneEscrowClient<'_>,
+) {
+    setup_escrow_inner(env, milestone_amounts, false)
+}
+
 pub(crate) fn setup_funded_escrow(
     env: &Env,
     milestone_amounts: soroban_sdk::Vec<i128>,
+) -> (
+    Address,
+    Address,
+    Address,
+    Address,
+    Address,
+    soroban_sdk::Address,
+    MilestoneEscrowClient<'_>,
+) {
+    setup_escrow_inner(env, milestone_amounts, true)
+}
+
+fn setup_escrow_inner(
+    env: &Env,
+    milestone_amounts: soroban_sdk::Vec<i128>,
+    funded: bool,
 ) -> (
     Address,
     Address,
@@ -257,7 +293,9 @@ pub(crate) fn setup_funded_escrow(
         &604800,
         &milestone_amounts,
     );
-    client.fund(&client_addr);
+    if funded {
+        client.fund(&client_addr);
+    }
 
     (
         client_addr,
@@ -11409,14 +11447,14 @@ fn test_escrow_interest_yield_unauthorized_admin_fails() {
 //   2. instance (Admin, InterestYieldState, …)
 //
 // After the consolidation, Admin is read from instance storage via
-// require_admin_from_instance, so the whole function operates on a single
-// instance ledger entry.
+// require_admin_from_instance. InterestYieldState itself later moved to its
+// own persistent key (issue #772) so the instance entry every call loads
+// stays small.
 
-/// set_escrow_interest_yield must write InterestYieldState to instance storage
-/// and the Admin read must stay in instance storage (not persistent), meaning
-/// both operations target a single ledger entry.
+/// set_escrow_interest_yield must write InterestYieldState to persistent
+/// storage, while the Admin read stays on the instance copy.
 #[test]
-fn test_set_escrow_interest_yield_writes_instance_storage_only() {
+fn test_set_escrow_interest_yield_writes_persistent_storage() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -11445,19 +11483,19 @@ fn test_set_escrow_interest_yield_writes_instance_storage_only() {
 
     // InterestYieldState must be absent before the first call.
     let state_before: Option<EscrowInterestYieldState> = env.as_contract(&contract_id, || {
-        env.storage().instance().get(&DataKey::InterestYieldState)
+        env.storage().persistent().get(&DataKey::InterestYieldState)
     });
     assert_eq!(state_before, None);
 
     client.set_escrow_interest_yield(&admin, &6_000u32, &4_000u32);
 
-    // InterestYieldState must now be present in instance storage.
+    // InterestYieldState must now be present in persistent storage.
     let state_after: Option<EscrowInterestYieldState> = env.as_contract(&contract_id, || {
-        env.storage().instance().get(&DataKey::InterestYieldState)
+        env.storage().persistent().get(&DataKey::InterestYieldState)
     });
     assert!(
         state_after.is_some(),
-        "InterestYieldState must be written to instance storage"
+        "InterestYieldState must be written to persistent storage"
     );
     let state = state_after.unwrap();
     assert_eq!(state.client_share_bps, 6_000);
@@ -11465,10 +11503,10 @@ fn test_set_escrow_interest_yield_writes_instance_storage_only() {
     assert!(!state.locked);
 }
 
-/// set_escrow_interest_yield must NOT write InterestYieldState to persistent
-/// storage — confirming it stays entirely within the instance ledger entry.
+/// set_escrow_interest_yield must NOT write InterestYieldState to instance
+/// storage — the instance entry is loaded by every call (issue #772).
 #[test]
-fn test_set_escrow_interest_yield_does_not_touch_persistent_storage() {
+fn test_set_escrow_interest_yield_does_not_grow_instance_storage() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -11502,13 +11540,13 @@ fn test_set_escrow_interest_yield_does_not_touch_persistent_storage() {
         "set_escrow_interest_yield must not alter persistent::Admin"
     );
 
-    // InterestYieldState must NOT appear in persistent storage.
-    let yield_persistent: Option<EscrowInterestYieldState> = env.as_contract(&contract_id, || {
-        env.storage().persistent().get(&DataKey::InterestYieldState)
+    // InterestYieldState must NOT appear in instance storage.
+    let yield_instance: Option<EscrowInterestYieldState> = env.as_contract(&contract_id, || {
+        env.storage().instance().get(&DataKey::InterestYieldState)
     });
     assert_eq!(
-        yield_persistent, None,
-        "set_escrow_interest_yield must not write InterestYieldState to persistent storage"
+        yield_instance, None,
+        "set_escrow_interest_yield must not write InterestYieldState to instance storage"
     );
 }
 
@@ -11539,7 +11577,7 @@ fn test_set_escrow_interest_yield_unauthorized_leaves_no_trace() {
 
     // No InterestYieldState must have been written.
     let state: Option<EscrowInterestYieldState> = env.as_contract(&contract_id, || {
-        env.storage().instance().get(&DataKey::InterestYieldState)
+        env.storage().persistent().get(&DataKey::InterestYieldState)
     });
     assert_eq!(
         state, None,
@@ -11572,7 +11610,7 @@ fn test_set_escrow_interest_yield_invalid_ratio_leaves_no_trace() {
 
     // No InterestYieldState must have been written.
     let state: Option<EscrowInterestYieldState> = env.as_contract(&contract_id, || {
-        env.storage().instance().get(&DataKey::InterestYieldState)
+        env.storage().persistent().get(&DataKey::InterestYieldState)
     });
     assert_eq!(
         state, None,
@@ -11596,14 +11634,14 @@ fn test_set_escrow_interest_yield_before_initialize_returns_not_initialized() {
 
     // Nothing must have been written to instance storage.
     let state: Option<EscrowInterestYieldState> = env.as_contract(&contract_id, || {
-        env.storage().instance().get(&DataKey::InterestYieldState)
+        env.storage().persistent().get(&DataKey::InterestYieldState)
     });
     assert_eq!(state, None);
 }
 
-/// Successive calls update the state correctly and remain on instance storage.
+/// Successive calls update the state correctly and remain on persistent storage.
 #[test]
-fn test_set_escrow_interest_yield_update_is_idempotent_and_instance_only() {
+fn test_set_escrow_interest_yield_update_is_idempotent_and_persistent() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -11626,7 +11664,7 @@ fn test_set_escrow_interest_yield_update_is_idempotent_and_instance_only() {
 
     let state: EscrowInterestYieldState = env
         .as_contract(&contract_id, || {
-            env.storage().instance().get(&DataKey::InterestYieldState)
+            env.storage().persistent().get(&DataKey::InterestYieldState)
         })
         .expect("InterestYieldState must be present after second call");
 
@@ -12928,11 +12966,10 @@ fn setup_pf_alloc_contract(env: &Env) -> (Address, Address, MilestoneEscrowClien
     (contract_id, admin, escrow)
 }
 
-/// set_platform_fee_allocation must write PlatformFeeAllocation to instance
-/// storage; the Admin read must stay in instance storage (not persistent),
-/// meaning both operations target a single ledger entry.
+/// set_platform_fee_allocation must write PlatformFeeAllocation to persistent
+/// storage (issue #772); the Admin read stays on the instance copy.
 #[test]
-fn test_set_platform_fee_allocation_writes_instance_storage_only() {
+fn test_set_platform_fee_allocation_writes_persistent_storage() {
     let env = Env::default();
     env.mock_all_auths();
     let (contract_id, admin, escrow) = setup_pf_alloc_contract(&env);
@@ -12948,22 +12985,23 @@ fn test_set_platform_fee_allocation_writes_instance_storage_only() {
 
     escrow.set_platform_fee_allocation(&admin, &2_000u32, &7_000u32, &1_000u32);
 
-    // Updated allocation must appear in instance storage.
+    // Updated allocation must appear in persistent storage.
     let alloc: Option<PlatformFeeAllocation> = env.as_contract(&contract_id, || {
         env.storage()
-            .instance()
+            .persistent()
             .get(&DataKey::PlatformFeeAllocation)
     });
-    let alloc = alloc.expect("PlatformFeeAllocation must be present in instance storage");
+    let alloc = alloc.expect("PlatformFeeAllocation must be present in persistent storage");
     assert_eq!(alloc.client_bps, 2_000);
     assert_eq!(alloc.freelancer_bps, 7_000);
     assert_eq!(alloc.treasury_bps, 1_000);
     assert!(!alloc.locked);
 }
 
-/// set_platform_fee_allocation must not alter persistent storage.
+/// set_platform_fee_allocation must not alter persistent::Admin, and must not
+/// put the allocation back into the instance entry every call loads.
 #[test]
-fn test_set_platform_fee_allocation_does_not_touch_persistent_storage() {
+fn test_set_platform_fee_allocation_does_not_grow_instance_storage() {
     let env = Env::default();
     env.mock_all_auths();
     let (contract_id, admin, escrow) = setup_pf_alloc_contract(&env);
@@ -12984,15 +13022,15 @@ fn test_set_platform_fee_allocation_does_not_touch_persistent_storage() {
         "set_platform_fee_allocation must not alter persistent::Admin"
     );
 
-    // PlatformFeeAllocation must NOT appear in persistent storage.
-    let alloc_persistent: Option<PlatformFeeAllocation> = env.as_contract(&contract_id, || {
+    // PlatformFeeAllocation must NOT appear in instance storage.
+    let alloc_instance: Option<PlatformFeeAllocation> = env.as_contract(&contract_id, || {
         env.storage()
-            .persistent()
+            .instance()
             .get(&DataKey::PlatformFeeAllocation)
     });
     assert_eq!(
-        alloc_persistent, None,
-        "PlatformFeeAllocation must not be written to persistent storage"
+        alloc_instance, None,
+        "PlatformFeeAllocation must not be written to instance storage"
     );
 }
 
@@ -13006,7 +13044,7 @@ fn test_set_platform_fee_allocation_unauthorized_leaves_no_trace() {
     // Snapshot the initial allocation written by initialize.
     let alloc_before: Option<PlatformFeeAllocation> = env.as_contract(&contract_id, || {
         env.storage()
-            .instance()
+            .persistent()
             .get(&DataKey::PlatformFeeAllocation)
     });
 
@@ -13017,7 +13055,7 @@ fn test_set_platform_fee_allocation_unauthorized_leaves_no_trace() {
     // Allocation must be unchanged.
     let alloc_after: Option<PlatformFeeAllocation> = env.as_contract(&contract_id, || {
         env.storage()
-            .instance()
+            .persistent()
             .get(&DataKey::PlatformFeeAllocation)
     });
     assert_eq!(
@@ -13035,7 +13073,7 @@ fn test_set_platform_fee_allocation_invalid_ratio_leaves_no_trace() {
 
     let alloc_before: Option<PlatformFeeAllocation> = env.as_contract(&contract_id, || {
         env.storage()
-            .instance()
+            .persistent()
             .get(&DataKey::PlatformFeeAllocation)
     });
 
@@ -13045,7 +13083,7 @@ fn test_set_platform_fee_allocation_invalid_ratio_leaves_no_trace() {
 
     let alloc_after: Option<PlatformFeeAllocation> = env.as_contract(&contract_id, || {
         env.storage()
-            .instance()
+            .persistent()
             .get(&DataKey::PlatformFeeAllocation)
     });
     assert_eq!(
@@ -13071,15 +13109,15 @@ fn test_set_platform_fee_allocation_before_initialize_returns_not_initialized() 
     // Nothing must have been written.
     let alloc: Option<PlatformFeeAllocation> = env.as_contract(&contract_id, || {
         env.storage()
-            .instance()
+            .persistent()
             .get(&DataKey::PlatformFeeAllocation)
     });
     assert_eq!(alloc, None);
 }
 
-/// Successive valid calls correctly update the instance-stored allocation.
+/// Successive valid calls correctly update the persistent allocation.
 #[test]
-fn test_set_platform_fee_allocation_successive_updates_stay_in_instance() {
+fn test_set_platform_fee_allocation_successive_updates_stay_persistent() {
     let env = Env::default();
     env.mock_all_auths();
     let (contract_id, admin, escrow) = setup_pf_alloc_contract(&env);
@@ -13090,7 +13128,7 @@ fn test_set_platform_fee_allocation_successive_updates_stay_in_instance() {
     let alloc: PlatformFeeAllocation = env
         .as_contract(&contract_id, || {
             env.storage()
-                .instance()
+                .persistent()
                 .get(&DataKey::PlatformFeeAllocation)
         })
         .expect("PlatformFeeAllocation must be present");
