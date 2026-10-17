@@ -3687,7 +3687,8 @@ impl MilestoneEscrow {
             | MilestoneStatus::Delivered
             | MilestoneStatus::PartiallyReleased
             | MilestoneStatus::Released
-            | MilestoneStatus::Refunded => return Err(Error::InvalidStatus),
+            | MilestoneStatus::Refunded
+            | MilestoneStatus::Split => return Err(Error::InvalidStatus),
         }
 
         let remaining = milestone
@@ -7614,7 +7615,7 @@ impl MilestoneEscrow {
             MilestoneStatus::Pending
             | MilestoneStatus::Delivered
             | MilestoneStatus::PartiallyReleased => {}
-            MilestoneStatus::Released | MilestoneStatus::Refunded | MilestoneStatus::Disputed => {
+            MilestoneStatus::Released | MilestoneStatus::Refunded | MilestoneStatus::Disputed | MilestoneStatus::Split => {
                 return Err(Error::InvalidStatus)
             }
         }
