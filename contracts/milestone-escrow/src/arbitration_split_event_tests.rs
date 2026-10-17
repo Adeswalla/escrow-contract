@@ -78,9 +78,9 @@ fn event_reconciles_with_persisted_state_on_partial_split() {
         disputed_escrow(&env, amounts);
     let token = token::Client::new(&env, &client.get_job().token);
 
-    // 40% to the client, 60% to the freelancer.
+    // 70% to the client, 30% to the freelancer.
     let alloc: RefundAllocation =
-        client.apply_dispute_arbitration_split(&arbiter_addr, &0u32, &4_000u32);
+        client.apply_dispute_arbitration_split(&arbiter_addr, &0u32, &7_000u32);
 
     // Exactly one structured event.
     assert_eq!(arbsplit_event_count(&env), 1);
@@ -97,14 +97,14 @@ fn event_reconciles_with_persisted_state_on_partial_split() {
     // Transferred amounts reconcile with the return value and the ledger.
     assert_eq!(ev.client_refund, alloc.client_refund);
     assert_eq!(ev.freelancer_payout, alloc.freelancer_payout);
-    assert_eq!(ev.client_refund, 4_000);
-    assert_eq!(ev.freelancer_payout, 6_000);
+    assert_eq!(ev.client_refund, 7_000);
+    assert_eq!(ev.freelancer_payout, 3_000);
     assert_eq!(token.balance(&client_addr), ev.client_refund);
     assert_eq!(token.balance(&freelancer_addr), ev.freelancer_payout);
 
     // BPS reconcile with the value persisted under ArbitrationSplitBps(0).
-    assert_eq!(ev.client_refund_bps, 4_000);
-    assert_eq!(ev.freelancer_payout_bps, 6_000);
+    assert_eq!(ev.client_refund_bps, 7_000);
+    assert_eq!(ev.freelancer_payout_bps, 3_000);
     assert_eq!(
         stored_split_bps(&env, &contract_id, 0),
         Some(ev.client_refund_bps)
@@ -115,7 +115,9 @@ fn event_reconciles_with_persisted_state_on_partial_split() {
     assert_eq!(ev.released_amount, ms.released_amount);
     assert_eq!(ev.released_amount, 6_000);
     assert_eq!(ev.status, ms.status);
-    assert_eq!(ev.status, MilestoneStatus::Released);
+    assert_eq!(ev.status, MilestoneStatus::Split);
+    assert_eq!(client.get_reputation(&client_addr), 0);
+    assert_eq!(client.get_reputation(&freelancer_addr), 0);
 }
 
 #[test]
