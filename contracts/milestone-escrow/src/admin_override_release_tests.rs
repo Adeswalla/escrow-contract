@@ -12,7 +12,8 @@ use soroban_sdk::{symbol_short, vec, Address, Env, IntoVal, Val};
 fn release_event_count(env: &Env) -> u32 {
     let topic_val: Val = symbol_short!("admovrls").into_val(env);
     let mut count = 0u32;
-    for event in env.events().all().iter() {
+    let events = all_event_tuples(env);
+    for event in events.iter() {
         if let Some(topic) = event.1.get(0) {
             if topic.get_payload() == topic_val.get_payload() {
                 count += 1;
@@ -103,7 +104,7 @@ fn client_freelancer_and_arbiter_are_unauthorized_without_storage_mutation() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (client_addr, freelancer_addr, arbiter_addr, admin_addr, token_id, _, client) =
+    let (client_addr, freelancer_addr, arbiter_addr, _, token_id, _, client) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
     let before = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
