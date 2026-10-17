@@ -60,6 +60,12 @@ fn test_admin_override_streaming_release_succeeds() {
     let token_client = token::Client::new(&env, &token_id);
     assert_eq!(token_client.balance(&freelancer_addr), 500);
     assert_eq!(token_client.balance(&client_addr), 500);
+    assert_eq!(
+        client.get_job().milestones.get(0).unwrap().status,
+        MilestoneStatus::Split
+    );
+    assert_eq!(client.get_reputation(&client_addr), 0);
+    assert_eq!(client.get_reputation(&freelancer_addr), 0);
 }
 
 #[test]

@@ -4207,7 +4207,7 @@ fn test_claim_auto_release_out_of_bounds_index_fails() {
 }
 
 #[test]
-fn test_claim_auto_release_zero_auto_release_seconds_fails() {
+fn test_initialize_zero_auto_release_seconds_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -5823,6 +5823,39 @@ fn test_initialize_invalid_amount_rolls_back_single_pass_writes() {
 /// Calling `initialize` a second time on an already-initialized contract must
 /// return `Error::AlreadyInitialized` and must not mutate any existing state.
 /// This is a focused regression guard on the re-entrancy / double-init path.
+#[test]
+fn test_initialize_event_includes_admin_and_creation_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let arbiter_addr = Address::generate(&env);
+    let admin_addr = Address::generate(&env);
+    let token_contract_id = env
+        .register_stellar_asset_contract_v2(admin_addr.clone())
+        .address();
+    let contract_id = env.register(MilestoneEscrow, ());
+    let escrow = MilestoneEscrowClient::new(&env, &contract_id);
+    let amounts = vec![&env, 1_000_i128];
+    let created_at = env.ledger().timestamp();
+
+    escrow.initialize(
+        &admin_addr,
+        &client_addr,
+        &freelancer_addr,
+        &arbiter_addr,
+        &token_contract_id,
+        &604_800,
+        &amounts,
+    );
+
+    let events = crate::all_event_tuples(&env);
+    let event = InitializedEvent::from_val(&env, &events.last().unwrap().2);
+    assert_eq!(event.admin, admin_addr);
+    assert_eq!(event.created_at, created_at);
+}
+
 #[test]
 fn test_initialize_already_initialized_returns_correct_error() {
     let env = Env::default();
