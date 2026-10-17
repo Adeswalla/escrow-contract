@@ -58,7 +58,7 @@ fn unauthorized_caller_returns_unauthorized_and_does_not_mutate_storage() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, freelancer_addr, _, admin_addr, token_id, _, client) =
+    let (_, freelancer_addr, _, _, token_id, _, client) =
         setup_funded_escrow(&env, vec![&env, 1_000_i128]);
 
     let before = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);

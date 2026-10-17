@@ -39,6 +39,9 @@ jobs:
       - name: Check for orphaned test snapshots
         run: python3 scripts/check-orphan-snapshots.py
 
+      - name: Check for orphaned test modules
+        run: python3 scripts/check-orphan-test-modules.py
+
       - name: Format check
         run: cargo fmt --manifest-path contracts/milestone-escrow/Cargo.toml --check
 
