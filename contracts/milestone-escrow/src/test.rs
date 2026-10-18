@@ -6,6 +6,8 @@ mod cancel_escrow_test;
 mod emergency_pause_admin_override_tests;
 #[path = "emergency_pause_test.rs"]
 mod emergency_pause_test;
+#[path = "revision_tests.rs"]
+mod revision_tests;
 use soroban_sdk::{
     contract, contractimpl, contracttype, testutils::Address as _, testutils::EnvTestConfig,
     testutils::Ledger, vec, Address, Env, FromVal, IntoVal, Symbol, TryIntoVal, Val,

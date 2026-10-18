@@ -13,6 +13,7 @@ This contract allows a client to fund a job broken into milestones. Funds are lo
 | `initialize` | Anyone | Set up job with parties, token, and milestone amounts |
 | `fund` | Client | Deposit total amount into contract |
 | `mark_delivered` | Freelancer | Mark a milestone as delivered |
+| `request_revision` | Client | Return a delivered milestone to Pending (max 3) |
 | `approve_milestone` | Client | Release funds for a delivered milestone |
 | `raise_dispute` | Client or Freelancer | Freeze a milestone for arbitration |
 | `resolve_dispute` | Arbiter | Release to freelancer or refund to client |
