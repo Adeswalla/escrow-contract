@@ -387,6 +387,10 @@ pub enum DataKey {
     /// Appended at the end of `DataKey` so existing variant discriminants stay
     /// stable (serialization compatibility for already-written ledger entries).
     MultiSigConfig,
+    /// Instance: true when the current emergency pause was set jointly by
+    /// the client and freelancer. Admin pauses leave this false so parties
+    /// cannot lift an admin freeze.
+    EpParty,
 }
 
 #[contracttype]
@@ -760,6 +764,14 @@ pub struct EmergencyPausedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmergencyUnpausedEvent {
     pub admin: Address,
+    pub contract_id: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmergencyPartyUnpausedEvent {
+    pub client: Address,
+    pub freelancer: Address,
     pub contract_id: Address,
 }
 
@@ -3687,7 +3699,8 @@ impl MilestoneEscrow {
             | MilestoneStatus::Delivered
             | MilestoneStatus::PartiallyReleased
             | MilestoneStatus::Released
-            | MilestoneStatus::Refunded => return Err(Error::InvalidStatus),
+            | MilestoneStatus::Refunded
+            | MilestoneStatus::Split => return Err(Error::InvalidStatus),
         }
 
         let remaining = milestone
@@ -4533,6 +4546,7 @@ impl MilestoneEscrow {
 
         let result = (|| {
             env.storage().instance().set(&DataKey::Ep, &true);
+            env.storage().instance().set(&DataKey::EpParty, &true);
             Ok(())
         })();
 
@@ -4592,6 +4606,7 @@ impl MilestoneEscrow {
         // Single write — no external call inside the transition body, so no
         // reentrancy lock is needed (mirrors emergency_pause_admin_override).
         env.storage().instance().set(&DataKey::Ep, &false);
+        env.storage().instance().set(&DataKey::EpParty, &false);
 
         env.events().publish(
             (symbol_short!("emunpause"),),
@@ -4601,6 +4616,47 @@ impl MilestoneEscrow {
             },
         );
 
+        Ok(())
+    }
+
+    /// Jointly lift a pause that the client and freelancer previously set.
+    /// Cannot clear an admin pause (`EpParty` must be true).
+    pub fn emergency_unpause_parties(
+        env: Env,
+        client: Address,
+        freelancer: Address,
+    ) -> Result<(), Error> {
+        let meta = Self::load_job_meta(&env)?;
+        if client != meta.client || freelancer != meta.freelancer {
+            return Err(Error::Unauthorized);
+        }
+        client.require_auth();
+        freelancer.require_auth();
+
+        if !Self::load_emergency_paused(&env)? {
+            return Err(Error::NotPaused);
+        }
+        let party_pause = env
+            .storage()
+            .instance()
+            .get::<_, bool>(&DataKey::EpParty)
+            .unwrap_or(false);
+        if !party_pause {
+            return Err(Error::Unauthorized);
+        }
+
+        Self::assert_emergency_pause_not_locked(&env)?;
+        env.storage().instance().set(&DataKey::Ep, &false);
+        env.storage().instance().set(&DataKey::EpParty, &false);
+
+        env.events().publish(
+            (symbol_short!("emunpause"),),
+            EmergencyPartyUnpausedEvent {
+                client,
+                freelancer,
+                contract_id: env.current_contract_address(),
+            },
+        );
         Ok(())
     }
 
@@ -4637,6 +4693,7 @@ impl MilestoneEscrow {
 
         // Single write — no external call, no EmergencyPauseLock needed.
         env.storage().instance().set(&DataKey::Ep, &paused);
+        env.storage().instance().set(&DataKey::EpParty, &false);
 
         env.events().publish(
             (symbol_short!("emoverrid"),),
@@ -7614,7 +7671,10 @@ impl MilestoneEscrow {
             MilestoneStatus::Pending
             | MilestoneStatus::Delivered
             | MilestoneStatus::PartiallyReleased => {}
-            MilestoneStatus::Released | MilestoneStatus::Refunded | MilestoneStatus::Disputed => {
+            MilestoneStatus::Released
+            | MilestoneStatus::Refunded
+            | MilestoneStatus::Disputed
+            | MilestoneStatus::Split => {
                 return Err(Error::InvalidStatus)
             }
         }

@@ -381,3 +381,100 @@ fn test_emergency_unpause_leaves_lock_clean_for_subsequent_pause() {
     client.emergency_pause(&client_addr, &freelancer_addr);
     assert!(client.is_emergency_paused());
 }
+
+#[test]
+fn joint_unpause() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client_addr, freelancer_addr, _, _, _, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1000_i128]);
+    client.emergency_pause(&client_addr, &freelancer_addr);
+    client.emergency_unpause_parties(&client_addr, &freelancer_addr);
+    let events = crate::all_event_tuples(&env);
+    assert!(
+        events.iter().any(|event| {
+            event
+                .1
+                .get(0)
+                .map(|topic| {
+                    let t: Symbol = topic.try_into_val(&env).unwrap();
+                    t == symbol_short!("emunpause")
+                })
+                .unwrap_or(false)
+        }),
+        "expected emunpause event"
+    );
+    assert!(!client.is_emergency_paused());
+}
+
+#[test]
+fn single_party_rejection() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client_addr, freelancer_addr, arbiter_addr, _, _, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1000_i128]);
+    client.emergency_pause(&client_addr, &freelancer_addr);
+    assert_eq!(
+        client.try_emergency_unpause_parties(&client_addr, &client_addr),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        client.try_emergency_unpause_parties(&freelancer_addr, &freelancer_addr),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        client.try_emergency_unpause_parties(&arbiter_addr, &freelancer_addr),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert!(client.is_emergency_paused());
+}
+
+#[test]
+fn admin_recovery_still_works() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client_addr, freelancer_addr, _, admin_addr, _, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1000_i128]);
+    client.emergency_pause(&client_addr, &freelancer_addr);
+    client.emergency_unpause(&admin_addr);
+    assert!(!client.is_emergency_paused());
+}
+
+#[test]
+fn pause_state_isolation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (c1, f1, _, _, _, _, e1) = setup_funded_escrow(&env, vec![&env, 1000_i128]);
+    let (c2, f2, _, _, _, _, e2) = setup_funded_escrow(&env, vec![&env, 1000_i128]);
+    e1.emergency_pause(&c1, &f1);
+    e2.emergency_pause(&c2, &f2);
+    e1.emergency_unpause_parties(&c1, &f1);
+    assert!(!e1.is_emergency_paused());
+    assert!(e2.is_emergency_paused());
+}
+
+#[test]
+fn parties_cannot_lift_admin_pause() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client_addr, freelancer_addr, _, admin_addr, _, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1000_i128]);
+    client.emergency_pause_admin_override(&admin_addr, &true);
+    assert_eq!(
+        client.try_emergency_unpause_parties(&client_addr, &freelancer_addr),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert!(client.is_emergency_paused());
+}
+
+#[test]
+fn unpause_when_not_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client_addr, freelancer_addr, _, _, _, _, client) =
+        setup_funded_escrow(&env, vec![&env, 1000_i128]);
+    assert_eq!(
+        client.try_emergency_unpause_parties(&client_addr, &freelancer_addr),
+        Err(Ok(Error::NotPaused))
+    );
+}
