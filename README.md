@@ -11,7 +11,8 @@ This contract allows a client to fund a job broken into milestones. Funds are lo
 | Function | Caller | Description |
 |---|---|---|
 | `initialize` | Anyone | Set up job with parties, token, and milestone amounts |
-| `fund` | Client | Deposit total amount into contract |
+| `fund` | Client | Deposit total amount (Upfront mode) |
+| `fund_milestone` | Client | Deposit one milestone (PerMilestone mode) |
 | `mark_delivered` | Freelancer | Mark a milestone as delivered |
 | `approve_milestone` | Client | Release funds for a delivered milestone |
 | `raise_dispute` | Client or Freelancer | Freeze a milestone for arbitration |

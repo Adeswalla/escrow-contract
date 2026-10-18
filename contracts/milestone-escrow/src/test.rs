@@ -6,6 +6,8 @@ mod cancel_escrow_test;
 mod emergency_pause_admin_override_tests;
 #[path = "emergency_pause_test.rs"]
 mod emergency_pause_test;
+#[path = "funding_mode_tests.rs"]
+mod funding_mode_tests;
 use soroban_sdk::{
     contract, contractimpl, contracttype, testutils::Address as _, testutils::EnvTestConfig,
     testutils::Ledger, vec, Address, Env, FromVal, IntoVal, Symbol, TryIntoVal, Val,
@@ -815,6 +817,7 @@ fn test_mark_delivered_invalid_amount_fails() {
         released_amount: 0,
         status: MilestoneStatus::Pending,
         delivered_at: 0,
+        funded: true,
     };
     env.as_contract(&contract_id, || {
         env.storage()
@@ -3712,6 +3715,7 @@ fn test_multisig_admin_override_release_amount_overflow_returns_invalid_amount()
                 released_amount: i128::MIN,
                 status: MilestoneStatus::Pending,
                 delivered_at: 0,
+                funded: true,
             },
         );
     });
@@ -3738,6 +3742,7 @@ fn test_multisig_admin_override_release_min_amount_returns_invalid_amount() {
                 released_amount: 0,
                 status: MilestoneStatus::Pending,
                 delivered_at: 0,
+                funded: true,
             },
         );
     });

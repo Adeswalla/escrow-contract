@@ -167,6 +167,7 @@ fn unlocked_milestone(amount: i128, released_amount: i128) -> Milestone {
         released_amount,
         status: MilestoneStatus::Pending,
         delivered_at: 0,
+        funded: true,
     }
 }
 
