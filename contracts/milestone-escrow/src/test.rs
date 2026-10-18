@@ -61,6 +61,8 @@ mod platform_fee_allocation_no_mutation_tests;
 mod platform_fee_split_overflow_tests;
 #[path = "propose_admin_transfer_footprint_tests.rs"]
 mod propose_admin_transfer_footprint_tests;
+#[path = "ratio_split_boundary_tests.rs"]
+mod ratio_split_boundary_tests;
 #[path = "read_path_tests.rs"]
 mod read_path_tests;
 #[path = "reputation_no_mutation_tests.rs"]
