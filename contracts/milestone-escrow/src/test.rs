@@ -69,6 +69,8 @@ mod revoke_cancel_approval_tests;
 mod set_escrow_interest_yield_guards_tests;
 #[path = "split_refund_net_distribution_tests.rs"]
 mod split_refund_net_distribution_tests;
+#[path = "tax_settlement_paths_tests.rs"]
+mod tax_settlement_paths_tests;
 #[path = "tax_withholding_tests.rs"]
 mod tax_withholding_tests;
 #[path = "version_tests.rs"]
