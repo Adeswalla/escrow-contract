@@ -3482,6 +3482,12 @@ impl MilestoneEscrow {
     /// milestone to `Disputed`, from which only `resolve_dispute` (or a
     /// split via `apply_dispute_arbitration_split`) can move it forward.
     ///
+    /// A dispute raised while the milestone is `Pending` is a *pre-delivery
+    /// (scope) dispute*; one raised while `Delivered` or `PartiallyReleased`
+    /// is a *delivery (quality) dispute*. Both freeze the milestone and share
+    /// the same arbiter outcomes. See `SPEC.md` §"Dispute semantics" for
+    /// the full per-status contract.
+    ///
     /// # Parameters
     /// * `caller`          – Must be either the job's client or freelancer.
     ///                       Must authorize the call.
@@ -3496,7 +3502,9 @@ impl MilestoneEscrow {
     /// * `NotFunded`        – The escrow has not been funded yet.
     /// * `InvalidMilestone` – `milestone_index` is out of range.
     /// * `InvalidStatus`    – The milestone is not `Pending`, `Delivered`,
-    ///                        or `PartiallyReleased`.
+    ///                        or `PartiallyReleased` (i.e. it is already
+    ///                        `Disputed`, or it is a terminal `Released`,
+    ///                        `Refunded`, or `Split` milestone).
     pub fn raise_dispute(env: Env, caller: Address, milestone_index: u32) -> Result<(), Error> {
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
@@ -3579,9 +3587,15 @@ impl MilestoneEscrow {
             return Err(Error::InvalidAmount);
         }
 
-        // Strict state machine: only Pending, Delivered, or PartiallyReleased
-        // may transition to Disputed. All other statuses (Released, Refunded,
-        // Disputed) are rejected.
+        // Strict state machine (see SPEC.md §"Dispute semantics"):
+        //   * Pending            – pre-delivery (scope) dispute.  Either party
+        //                          may flag that the engagement terms are in
+        //                          question before any work is accepted.  The
+        //                          milestone is frozen until the arbiter acts.
+        //   * Delivered          – delivery (quality) dispute on submitted work.
+        //   * PartiallyReleased  – dispute over the unreleased remainder.
+        // Every other status (Released, Refunded, Disputed, Split) is terminal
+        // or already disputed and is rejected with `InvalidStatus`.
         match milestone.status {
             MilestoneStatus::Pending
             | MilestoneStatus::Delivered
