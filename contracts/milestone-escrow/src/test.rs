@@ -77,6 +77,8 @@ mod tax_settlement_paths_tests;
 mod tax_withholding_tests;
 #[path = "version_tests.rs"]
 mod version_tests;
+#[path = "whitelist_management_error_paths_tests.rs"]
+mod whitelist_management_error_paths_tests;
 
 #[contracttype]
 enum ReentrantTokenDataKey {
