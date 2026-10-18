@@ -257,6 +257,8 @@ pub(crate) fn setup_funded_escrow(
         &604800,
         &milestone_amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     (
@@ -350,6 +352,8 @@ fn test_full_happy_path() {
 
     assert_eq!(token.balance(&client_addr), 10_000);
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     assert_eq!(token.balance(&client_addr), 0);
     assert_eq!(token.balance(&contract_id), 10_000);
@@ -396,6 +400,8 @@ fn test_dispute_release_to_freelancer() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -434,6 +440,8 @@ fn test_dispute_refund_to_client() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.raise_dispute(&client_addr, &0u32);
     client.resolve_dispute(&arbiter_addr, &0u32, &false);
@@ -471,6 +479,8 @@ fn test_apply_dispute_arbitration_split_transfers_percentages() {
         &604800u64,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // Move milestone into disputed state
@@ -703,6 +713,8 @@ fn test_unauthorized_fund_fails() {
         &amounts,
     );
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     let result = client.try_fund(&bad_actor);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
 }
@@ -735,6 +747,8 @@ fn test_invalid_milestone_index_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     let result = client.try_mark_delivered(&freelancer_addr, &1u32);
@@ -769,6 +783,8 @@ fn test_mark_delivered_zero_address_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     let zero_account = Address::from_str(
@@ -807,6 +823,8 @@ fn test_mark_delivered_invalid_amount_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // Mock storage to change milestone amount to 0
@@ -854,6 +872,8 @@ fn test_mark_delivered_wrong_status_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -974,6 +994,8 @@ fn test_approve_milestone_zero_account_address_fails() {
         &604800,
         &vec![&env, 1_000_i128],
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -1012,6 +1034,8 @@ fn test_approve_milestone_zero_contract_address_fails() {
         &604800,
         &vec![&env, 1_000_i128],
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -1051,6 +1075,8 @@ fn test_approve_milestone_wrong_status_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     let result = client.try_approve_milestone(&client_addr, &0u32);
@@ -1086,6 +1112,8 @@ fn test_approve_milestone_invalid_index_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -1156,6 +1184,8 @@ fn test_raise_dispute_unauthorized_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     let result = client.try_raise_dispute(&bad_actor, &0u32);
@@ -1190,6 +1220,8 @@ fn test_raise_dispute_wrong_status_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.approve_milestone(&client_addr, &0u32);
@@ -1227,6 +1259,8 @@ fn test_resolve_dispute_unauthorized_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.raise_dispute(&client_addr, &0u32);
 
@@ -1262,6 +1296,8 @@ fn test_resolve_dispute_wrong_status_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     let result = client.try_resolve_dispute(&arbiter_addr, &0u32, &true);
@@ -1294,6 +1330,8 @@ fn test_resolve_dispute_reverts_when_contract_balance_is_empty() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -1331,6 +1369,8 @@ fn test_resolve_dispute_emits_structured_event() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -1396,6 +1436,8 @@ fn test_resolve_dispute_paid_amount_reflects_capped_transfer() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -1464,6 +1506,8 @@ fn test_double_fund_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     let result = client.try_fund(&client_addr);
@@ -1496,6 +1540,8 @@ fn test_fund_reentrancy_guard_blocks_callback_fund() {
         &amounts,
     );
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     assert!(token.callback_attempted());
@@ -1535,6 +1581,8 @@ fn test_fund_emits_structured_event() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     let fund_topic_val: Val = symbol_short!("fund").into_val(&env);
@@ -1593,6 +1641,8 @@ fn test_failed_fund_does_not_emit_fund_event() {
         &amounts,
     );
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     let result = client.try_fund(&wrong_client);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
 
@@ -1663,6 +1713,8 @@ fn test_fund_rejects_wrong_client() {
         &amounts,
     );
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     let result = client.try_fund(&wrong_client);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
 }
@@ -1695,6 +1747,8 @@ fn test_fund_fails_without_balance() {
         &amounts,
     );
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     let result = client.try_fund(&client_addr);
     assert!(result.is_err());
 }
@@ -1736,6 +1790,8 @@ fn test_fund_uses_cached_total_for_many_milestones() {
         &milestone_amounts,
     );
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     assert_eq!(token.balance(&client_addr), 0);
@@ -1780,6 +1836,8 @@ fn test_fund_rejects_missing_milestone_index() {
         env.storage().persistent().remove(&DataKey::Milestone(1u32));
     });
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     let result = client.try_fund(&client_addr);
     assert_eq!(result, Err(Ok(Error::InvalidMilestone)));
     assert_eq!(token.balance(&client_addr), 3_000);
@@ -1829,6 +1887,8 @@ fn test_fund_rejects_zero_milestone_amount() {
             .set(&DataKey::Milestone(0u32), &milestone);
     });
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     let result = client.try_fund(&client_addr);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
     assert_eq!(token.balance(&client_addr), 1_000);
@@ -1878,6 +1938,8 @@ fn test_fund_rejects_negative_milestone_amount() {
             .set(&DataKey::Milestone(0u32), &milestone);
     });
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     let result = client.try_fund(&client_addr);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
     assert_eq!(token.balance(&client_addr), 1_000);
@@ -2254,6 +2316,8 @@ fn test_partial_release_remaining_balance() {
         &amounts,
     );
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.approve_partial(&client_addr, &0u32, &4_000_i128);
@@ -2298,6 +2362,8 @@ fn test_multiple_partial_releases_sum_full() {
         &amounts,
     );
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.approve_partial(&client_addr, &0u32, &3_000_i128);
@@ -2343,6 +2409,8 @@ fn test_over_release_fails() {
         &amounts,
     );
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -2380,6 +2448,8 @@ fn test_negative_or_zero_release_fails() {
         &amounts,
     );
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -2420,6 +2490,8 @@ fn test_approve_partial_large_amounts_fails() {
         &amounts,
     );
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.approve_partial(&client_addr, &0u32, &1_i128);
@@ -2459,6 +2531,8 @@ fn test_release_on_wrong_status_fails() {
         &amounts,
     );
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     let result = client.try_approve_partial(&client_addr, &0u32, &4000_i128);
@@ -2494,6 +2568,8 @@ fn test_approve_partial_wrong_status_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // Try to approve partial on Pending status
@@ -2538,6 +2614,8 @@ fn test_approve_partial_invalid_milestone_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -2607,6 +2685,8 @@ fn test_approve_partial_unauthorized_partial_release_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -2643,6 +2723,8 @@ fn test_approve_partial_arbiter_is_unauthorized() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -2679,6 +2761,8 @@ fn test_approve_partial_zero_amount_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -2715,6 +2799,8 @@ fn test_approve_partial_negative_amount_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -2860,6 +2946,8 @@ fn test_approve_partial_on_disputed_milestone_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -2897,6 +2985,8 @@ fn test_approve_partial_on_refunded_milestone_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -3813,6 +3903,8 @@ fn test_claim_auto_release_disputed_status_fails() {
         &amounts,
     );
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -3855,6 +3947,8 @@ fn test_time_until_auto_release() {
         &amounts,
     );
 
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -3907,6 +4001,8 @@ fn test_approve_milestone_state_transitions() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // Test 1: Pending ΓåÆ InvalidStatus (should fail)
@@ -3979,6 +4075,8 @@ fn test_mark_delivered_unauthorized_arbiter_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     let result = client.try_mark_delivered(&arbiter_addr, &0u32);
@@ -4013,6 +4111,8 @@ fn test_mark_delivered_unauthorized_freelancer_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     let result = client.try_mark_delivered(&impostor, &0u32);
@@ -4048,6 +4148,8 @@ fn test_approve_partial_exceeds_remaining_amount_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.approve_partial(&client_addr, &0u32, &6_000_i128);
@@ -4085,6 +4187,8 @@ fn test_approve_partial_index_out_of_range_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     let result = client.try_approve_partial(&client_addr, &2u32, &1_000_i128);
@@ -4121,6 +4225,8 @@ fn test_mark_delivered_state_transitions() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // Test 1: Pending ΓåÆ Delivered (should pass)
@@ -4165,6 +4271,8 @@ fn test_mark_delivered_state_transitions() {
         &604800,
         &amounts2,
     );
+    client2.accept_job(&freelancer_addr2);
+    client2.accept_arbiter(&arbiter_addr2);
     client2.fund(&client_addr2);
 
     // Released
@@ -4268,6 +4376,8 @@ fn test_claim_auto_release_zero_remaining_amount_fails() {
         &100u64,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -4329,6 +4439,8 @@ fn setup_delivered_single(
         &604800,
         &amounts,
     );
+    escrow.accept_job(&freelancer_addr);
+    escrow.accept_arbiter(&arbiter_addr);
     escrow.fund(&client_addr);
     escrow.mark_delivered(&freelancer_addr, &0u32);
 
@@ -4461,6 +4573,8 @@ fn test_approve_partial_does_not_mutate_sibling_milestone() {
         &604800,
         &amounts,
     );
+    escrow.accept_job(&freelancer_addr);
+    escrow.accept_arbiter(&arbiter_addr);
     escrow.fund(&client_addr);
     escrow.mark_delivered(&freelancer_addr, &0u32);
 
@@ -4520,6 +4634,8 @@ fn test_approve_milestone_emits_event() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.approve_milestone(&client_addr, &0u32);
@@ -4566,6 +4682,8 @@ fn test_approve_milestone_on_disputed_milestone_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -4602,6 +4720,8 @@ fn test_approve_milestone_on_refunded_milestone_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -4648,6 +4768,8 @@ fn test_approve_milestone_max_i128_checked_math_no_overflow() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -4697,6 +4819,8 @@ fn test_approve_milestone_overflow_checked_math_returns_error() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -4748,6 +4872,8 @@ fn test_claim_auto_release_uses_temporary_storage_for_deadline() {
         &200,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // mark_delivered writes delivered_at to both persistent Milestone and
@@ -4809,6 +4935,8 @@ fn test_time_until_auto_release_reads_temporary_storage() {
         &300,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // Ledger starts at 0; delivered_at written to temporary storage = 0.
@@ -4873,6 +5001,8 @@ fn test_approve_milestone_writes_temporary_released_flag() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -4948,6 +5078,8 @@ fn test_mark_delivered_wrong_caller_is_unauthorized() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // `impostor` is not the registered freelancer.
@@ -4995,6 +5127,8 @@ fn test_mark_delivered_u32_max_index_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // u32::MAX far exceeds milestone_count (1).
@@ -5054,6 +5188,8 @@ fn test_mark_delivered_on_released_milestone_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // Drive the milestone to `Released` via the normal happy path.
@@ -5104,6 +5240,8 @@ fn test_mark_delivered_on_refunded_milestone_fails() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // Drive the milestone to `Refunded`: deliver ΓåÆ dispute ΓåÆ resolve for client.
@@ -5163,6 +5301,8 @@ fn test_claim_auto_release_max_i128_checked_math_no_overflow() {
         &1u64,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -5222,6 +5362,8 @@ fn test_claim_auto_release_overflow_checked_math_returns_error() {
         &u64::MAX,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // Advance the ledger so delivered_at is non-zero, making the overflow
@@ -5276,6 +5418,8 @@ fn test_claim_auto_release_double_execution_reverts() {
         &100u64,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -5341,6 +5485,8 @@ fn test_claim_auto_release_no_auth_provided_fails() {
         &100u64,
         &amounts,
     );
+    escrow.accept_job(&freelancer_addr);
+    escrow.accept_arbiter(&arbiter_addr);
     escrow.fund(&client_addr);
     escrow.mark_delivered(&freelancer_addr, &0u32);
 
@@ -5403,6 +5549,8 @@ fn test_claim_auto_release_wrong_identity_unauthorized() {
         &100u64,
         &amounts,
     );
+    escrow.accept_job(&freelancer_addr);
+    escrow.accept_arbiter(&arbiter_addr);
     escrow.fund(&client_addr);
     escrow.mark_delivered(&freelancer_addr, &0u32);
 
@@ -5748,6 +5896,8 @@ fn test_initialize_multiple_milestones_all_pending_correct_amounts() {
     token_admin.mint(&client_addr, &total);
     let token = token::Client::new(&env, &token_contract_id);
 
+    escrow.accept_job(&freelancer_addr);
+    escrow.accept_arbiter(&arbiter_addr);
     escrow.fund(&client_addr);
     assert_eq!(token.balance(&contract_id), total);
     assert_eq!(token.balance(&client_addr), 0);
@@ -5967,6 +6117,8 @@ fn test_initialize_state_transition_matrix() {
     );
 
     // State 2: Funded -> Must Revert
+    escrow.accept_job(&freelancer_addr);
+    escrow.accept_arbiter(&arbiter_addr);
     escrow.fund(&client_addr);
     assert_eq!(
         attempt_init(&escrow),
@@ -6003,6 +6155,8 @@ fn test_initialize_state_transition_matrix() {
         &604800,
         &amounts,
     );
+    escrow3.accept_job(&freelancer_addr);
+    escrow3.accept_arbiter(&arbiter_addr);
     escrow3.fund(&client_addr);
     escrow3.mark_delivered(&freelancer_addr, &0);
     escrow3.approve_milestone(&client_addr, &0);
@@ -6025,6 +6179,8 @@ fn test_initialize_state_transition_matrix() {
         &604800,
         &amounts,
     );
+    escrow2.accept_job(&freelancer_addr);
+    escrow2.accept_arbiter(&arbiter_addr);
     escrow2.fund(&client_addr);
 
     // State 6: Disputed -> Must Revert
@@ -6763,6 +6919,8 @@ fn test_add_whitelisted_token_after_funded_fails() {
         &604800,
         &vec![&env, 1_000_i128],
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // Contract is now funded; adding a new token must be rejected.
@@ -9121,6 +9279,8 @@ fn raise_dispute_budget_for_milestone_count(count: u32) -> (u64, u64) {
         &amounts,
     );
     token_admin.mint(&client_addr, &total);
+    escrow.accept_job(&freelancer_addr);
+    escrow.accept_arbiter(&arbiter_addr);
     escrow.fund(&client_addr);
 
     // Dispute the last milestone so any accidental linear scan over the
@@ -9227,6 +9387,8 @@ fn setup_multisig(env: &Env, threshold: u32) -> (MilestoneEscrowClient<'_>, Addr
     );
 
     token_admin.mint(&dummy_client, &1_000_i128);
+    client.accept_job(&dummy_freelancer);
+    client.accept_arbiter(&dummy_arbiter);
     client.fund(&dummy_client);
 
     let signer1 = Address::generate(env);
@@ -10413,6 +10575,8 @@ fn test_multisig_2_of_3_satisfied_by_two_signers() {
     );
     // multisig_approve guards against a zero contract balance.
     token_admin.mint(&dummy_client, &1_000_i128);
+    client.accept_job(&client.get_job().freelancer);
+    client.accept_arbiter(&client.get_job().arbiter);
     client.fund(&dummy_client);
     client.multisig_approval_init(&admin, &signers, &2u32); // 2-of-3
 
@@ -10491,6 +10655,8 @@ fn test_multisig_threshold_one_satisfied_by_single_signer() {
     );
     // multisig_approve guards against a zero contract balance.
     token_admin.mint(&dummy_client, &1_000_i128);
+    client.accept_job(&client.get_job().freelancer);
+    client.accept_arbiter(&client.get_job().arbiter);
     client.fund(&dummy_client);
     client.multisig_approval_init(&admin, &signers, &1u32); // 1-of-2
 
@@ -10690,6 +10856,8 @@ fn test_resolve_dispute_state_transition_matrix() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // --- Invalid sources (must fail with InvalidStatus, status unchanged) ---
@@ -12045,6 +12213,8 @@ fn test_cancel_escrow_rejected_when_balance_drained_externally() {
         &604800,
         &amounts,
     );
+    escrow_client.accept_job(&freelancer_addr);
+    escrow_client.accept_arbiter(&arbiter_addr);
     escrow_client.fund(&client_addr);
 
     // Externally drain the contract's entire balance.
@@ -12084,6 +12254,8 @@ fn test_cancel_escrow_rejected_when_balance_drained_to_exact_zero() {
         &604800,
         &amounts,
     );
+    escrow_client.accept_job(&freelancer_addr);
+    escrow_client.accept_arbiter(&arbiter_addr);
     escrow_client.fund(&client_addr);
     assert_eq!(token.balance(&contract_id), 5_000);
 
@@ -12295,6 +12467,8 @@ fn test_cancel_escrow_succeeds_with_partial_balance() {
         &604800,
         &amounts,
     );
+    escrow_client.accept_job(&freelancer_addr);
+    escrow_client.accept_arbiter(&arbiter_addr);
     escrow_client.fund(&client_addr);
 
     // Drain some but not all funds — balance remains positive.
@@ -12334,6 +12508,8 @@ fn test_cancel_escrow_empty_balance_emits_no_event() {
         &604800,
         &amounts,
     );
+    escrow_client.accept_job(&freelancer_addr);
+    escrow_client.accept_arbiter(&arbiter_addr);
     escrow_client.fund(&client_addr);
 
     // Drain all funds.
@@ -13458,6 +13634,8 @@ fn test_cancel_escrow_blocks_fund() {
         &vec![&env, 5_000_i128],
     );
     // Fund first so cancel_escrow is callable, then verify downstream ops blocked.
+    escrow.accept_job(&freelancer_addr);
+    escrow.accept_arbiter(&arbiter_addr);
     escrow.fund(&client_addr);
     escrow.cancel_escrow(&client_addr);
     escrow.cancel_escrow(&freelancer_addr);
@@ -14940,6 +15118,8 @@ fn test_raise_dispute_unauthorized_caller_returns_error_and_no_storage_mutated()
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // `bad_actor` is neither the client nor the freelancer.
@@ -14992,6 +15172,8 @@ fn test_raise_dispute_illegal_source_state_returns_error_and_no_storage_mutated(
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // Advance the milestone to Released via the normal happy path.
@@ -15055,6 +15237,8 @@ fn test_raise_dispute_refunded_state_returns_invalid_status_and_no_storage_mutat
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     // First raise a dispute legitimately, then resolve it as a refund.
@@ -15116,6 +15300,8 @@ fn test_raise_dispute_by_client_on_pending_milestone_succeeds() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     client.raise_dispute(&client_addr, &0u32);
@@ -15158,6 +15344,8 @@ fn test_raise_dispute_by_freelancer_on_delivered_milestone_succeeds() {
         &604800,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 

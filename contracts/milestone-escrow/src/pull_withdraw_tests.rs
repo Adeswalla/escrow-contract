@@ -44,6 +44,8 @@ fn setup_revocable_escrow(
         &604800,
         &vec![env, 1_000_i128],
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
 
     (

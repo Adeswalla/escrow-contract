@@ -123,10 +123,18 @@ pub enum Error {
     /// A settlement asked to distribute more than the contract currently
     /// holds in the escrowed token.
     InsufficientBalance = 37,
+    /// A delivery or dispute endpoint was called before both the freelancer
+    /// (`accept_job`) and the arbiter (`accept_arbiter`) accepted the job.
+    NotAccepted = 38,
 }
 
 const MAX_TREASURY_FEE_BPS: u32 = 2000;
 const MAX_CLIENT_FEE_BPS: u32 = 5000;
+
+/// Seconds after funding during which the freelancer and arbiter may accept
+/// the job. Once it has passed without both acceptances, the client can
+/// reclaim the escrow with `withdraw_unaccepted`.
+const ACCEPTANCE_WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
 
 const BPS_SCALE: u32 = 10_000;
 
@@ -394,6 +402,13 @@ pub enum DataKey {
     /// Instance: sum of every `Owed(_)` entry, excluded from the balance that
     /// settlement paths may pay out so credits stay fully backed.
     TotalOwed,
+    /// Instance: bitmask of the parties that accepted the job.  Bit 0
+    /// (value 1) = freelancer via `accept_job`; bit 1 (value 2) = arbiter via
+    /// `accept_arbiter`.  Delivery and dispute endpoints require both bits.
+    Acceptance,
+    /// Instance: ledger timestamp at which `fund` ran.  Starts the
+    /// `ACCEPTANCE_WINDOW_SECONDS` window checked by `withdraw_unaccepted`.
+    FundedAt,
 }
 
 #[contracttype]
@@ -689,6 +704,23 @@ pub struct ClaimedEvent {
 pub struct WithdrawnEvent {
     pub contract_id: Address,
     pub recipient: Address,
+    pub token: Address,
+    pub amount: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JobAcceptedEvent {
+    pub contract_id: Address,
+    pub party: Address,
+    pub acceptance_mask: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnacceptedWithdrawnEvent {
+    pub contract_id: Address,
+    pub client: Address,
     pub token: Address,
     pub amount: i128,
 }
@@ -2146,6 +2178,45 @@ impl MilestoneEscrow {
         env.storage().instance().set(&DataKey::Job, meta);
     }
 
+    fn load_acceptance(env: &Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::Acceptance)
+            .unwrap_or(0)
+    }
+
+    /// Reject with `NotAccepted` unless both the freelancer and the arbiter
+    /// have accepted the job.
+    fn require_accepted(env: &Env) -> Result<(), Error> {
+        if Self::load_acceptance(env) != 3 {
+            return Err(Error::NotAccepted);
+        }
+        Ok(())
+    }
+
+    /// Record `bit` in the acceptance mask on behalf of `party` and publish
+    /// the acceptance under `topic`.
+    fn record_acceptance(env: &Env, party: Address, bit: u32, topic: Symbol) -> Result<(), Error> {
+        let mask = Self::load_acceptance(env);
+        if mask & bit != 0 {
+            return Err(Error::InvalidStatus);
+        }
+        let new_mask = mask | bit;
+        env.storage()
+            .instance()
+            .set(&DataKey::Acceptance, &new_mask);
+
+        env.events().publish(
+            (topic,),
+            JobAcceptedEvent {
+                contract_id: env.current_contract_address(),
+                party,
+                acceptance_mask: new_mask,
+            },
+        );
+        Ok(())
+    }
+
     fn load_milestone(env: &Env, index: u32) -> Result<Milestone, Error> {
         env.storage()
             .persistent()
@@ -2966,6 +3037,9 @@ impl MilestoneEscrow {
         // and prevent double-funding via reentrancy
         meta.funded = true;
         Self::store_job_meta(&env, &meta);
+        env.storage()
+            .instance()
+            .set(&DataKey::FundedAt, &env.ledger().timestamp());
 
         let token_client = token::Client::new(&env, &meta.token);
         token_client.transfer(&client, env.current_contract_address(), &total_amount);
@@ -2982,6 +3056,127 @@ impl MilestoneEscrow {
                 milestone_count: meta.milestone_count,
                 auto_release_seconds: meta.auto_release_seconds,
                 funded: meta.funded,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Accept the job as its freelancer, agreeing on-chain to the milestone
+    /// amounts and auto-release window set at `initialize`.
+    ///
+    /// `mark_delivered` and the dispute endpoints require both this and
+    /// `accept_arbiter`.
+    ///
+    /// # Errors
+    /// * `NotInitialized` – Contract has not been initialized.
+    /// * `Unauthorized`   – `freelancer` does not match the job's freelancer.
+    /// * `InvalidStatus`  – The freelancer has already accepted.
+    pub fn accept_job(env: Env, freelancer: Address) -> Result<(), Error> {
+        freelancer.require_auth();
+        let meta = Self::load_job_meta(&env)?;
+        if meta.freelancer != freelancer {
+            return Err(Error::Unauthorized);
+        }
+        Self::record_acceptance(&env, freelancer, 1, symbol_short!("acceptjob"))
+    }
+
+    /// Accept the job as its arbiter, agreeing to resolve its disputes.
+    ///
+    /// `mark_delivered` and the dispute endpoints require both this and
+    /// `accept_job`.
+    ///
+    /// # Errors
+    /// * `NotInitialized` – Contract has not been initialized.
+    /// * `Unauthorized`   – `arbiter` does not match the job's arbiter.
+    /// * `InvalidStatus`  – The arbiter has already accepted.
+    pub fn accept_arbiter(env: Env, arbiter: Address) -> Result<(), Error> {
+        arbiter.require_auth();
+        let meta = Self::load_job_meta(&env)?;
+        if meta.arbiter != arbiter {
+            return Err(Error::Unauthorized);
+        }
+        Self::record_acceptance(&env, arbiter, 2, symbol_short!("acceptarb"))
+    }
+
+    /// Refund the client in full when the job was not accepted by both the
+    /// freelancer and the arbiter within `ACCEPTANCE_WINDOW_SECONDS` of
+    /// funding.
+    ///
+    /// Every milestone that is not already `Released` or `Refunded` moves to
+    /// `Refunded` and its remaining amount is paid to the client.
+    ///
+    /// # Errors
+    /// * `Paused` / `EscrowLocked` – The contract is emergency-paused or
+    ///                               cancel-locked.
+    /// * `NotInitialized`          – Contract has not been initialized.
+    /// * `Unauthorized`            – `client` does not match the job's client.
+    /// * `NotFunded`               – The escrow has not been funded yet.
+    /// * `InvalidStatus`           – Both parties have accepted the job.
+    /// * `DeadlineNotPassed`       – The acceptance window is still open.
+    /// * `InvalidAmount`           – Nothing remains to refund.
+    pub fn withdraw_unaccepted(env: Env, client: Address) -> Result<(), Error> {
+        Self::ensure_not_paused(&env)?;
+        client.require_auth();
+        let meta = Self::load_job_meta(&env)?;
+
+        if meta.client != client {
+            return Err(Error::Unauthorized);
+        }
+        if !meta.funded {
+            return Err(Error::NotFunded);
+        }
+        if Self::load_acceptance(&env) == 3 {
+            return Err(Error::InvalidStatus);
+        }
+
+        let funded_at: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::FundedAt)
+            .unwrap_or(meta.created_at);
+        let deadline = funded_at
+            .checked_add(ACCEPTANCE_WINDOW_SECONDS)
+            .ok_or(Error::InvalidAmount)?;
+        if env.ledger().timestamp() < deadline {
+            return Err(Error::DeadlineNotPassed);
+        }
+
+        let mut total_refunded: i128 = 0;
+        for index in 0..meta.milestone_count {
+            let mut milestone = Self::load_milestone(&env, index)?;
+            if milestone.status == MilestoneStatus::Released
+                || milestone.status == MilestoneStatus::Refunded
+            {
+                continue;
+            }
+            let remaining = milestone
+                .amount
+                .checked_sub(milestone.released_amount)
+                .ok_or(Error::InvalidAmount)?;
+            if remaining > 0 {
+                total_refunded = total_refunded
+                    .checked_add(remaining)
+                    .ok_or(Error::InvalidAmount)?;
+                milestone.status = MilestoneStatus::Refunded;
+                Self::store_milestone(&env, index, &milestone);
+            }
+        }
+
+        if total_refunded <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+
+        let token_client = token::Client::new(&env, &meta.token);
+        Self::pay_or_credit(&env, &token_client, &meta.client, &total_refunded)?;
+
+        env.events().publish(
+            (symbol_short!("unaccref"),),
+            UnacceptedWithdrawnEvent {
+                contract_id: env.current_contract_address(),
+                client: meta.client,
+                token: meta.token,
+                amount: total_refunded,
             },
         );
 
@@ -3009,6 +3204,8 @@ impl MilestoneEscrow {
     /// * `InvalidMilestone` – `milestone_index` is out of range.
     /// * `InvalidAmount`    – The milestone's amount is not positive.
     /// * `InvalidStatus`    – The milestone is not currently `Pending`.
+    /// * `NotAccepted`      – The freelancer or arbiter has not accepted the
+    ///                        job.
     pub fn mark_delivered(
         env: Env,
         freelancer: Address,
@@ -3056,6 +3253,7 @@ impl MilestoneEscrow {
         if milestone.status != MilestoneStatus::Pending {
             return Err(Error::InvalidStatus);
         }
+        Self::require_accepted(&env)?;
 
         let delivered_at = env.ledger().timestamp();
         milestone.status = MilestoneStatus::Delivered;
@@ -3619,6 +3817,8 @@ impl MilestoneEscrow {
     /// * `InvalidMilestone` – `milestone_index` is out of range.
     /// * `InvalidStatus`    – The milestone is not `Pending`, `Delivered`,
     ///                        or `PartiallyReleased`.
+    /// * `NotAccepted`      – The freelancer or arbiter has not accepted the
+    ///                        job.
     pub fn raise_dispute(env: Env, caller: Address, milestone_index: u32) -> Result<(), Error> {
         Self::ensure_not_paused(&env)?;
         Self::assert_tax_withholding_not_locked(&env)?;
@@ -3710,6 +3910,7 @@ impl MilestoneEscrow {
             | MilestoneStatus::PartiallyReleased => {}
             _ => return Err(Error::InvalidStatus),
         }
+        Self::require_accepted(env)?;
 
         milestone.status = MilestoneStatus::Disputed;
         Self::store_milestone(env, milestone_index, &milestone);
@@ -3756,6 +3957,8 @@ impl MilestoneEscrow {
     /// * `Unauthorized`     – `arbiter` does not match the job's arbiter.
     /// * `NotFunded`        – The escrow has not been funded yet.
     /// * `InvalidStatus`    – The milestone is not currently `Disputed`.
+    /// * `NotAccepted`      – The freelancer or arbiter has not accepted the
+    ///                        job.
     /// * `InvalidAmount`    – The milestone's remaining balance, or the
     ///                        contract's token balance, is not positive.
     pub fn resolve_dispute(
@@ -3811,6 +4014,7 @@ impl MilestoneEscrow {
             | MilestoneStatus::Released
             | MilestoneStatus::Refunded => return Err(Error::InvalidStatus),
         }
+        Self::require_accepted(&env)?;
 
         let remaining = milestone
             .amount
@@ -4035,6 +4239,7 @@ impl MilestoneEscrow {
         if milestone.status != MilestoneStatus::Disputed {
             return Err(Error::InvalidStatus);
         }
+        Self::require_accepted(&env)?;
 
         let remaining = milestone
             .amount
@@ -7001,6 +7206,8 @@ mod is_emergency_paused_not_initialized_tests;
 mod is_escrow_interest_yield_locked_tests;
 #[cfg(test)]
 mod is_multisig_locked_tests;
+#[cfg(test)]
+mod job_acceptance_tests;
 #[cfg(test)]
 mod multisig_approve_checked_arithmetic_tests;
 #[cfg(test)]

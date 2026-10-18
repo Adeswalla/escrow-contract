@@ -761,6 +761,8 @@ fn test_payment_streaming_lock_blocks_approve_milestone() {
 
     let token_admin = token::StellarAssetClient::new(&env, &escrow.get_job().token);
     token_admin.mint(&parties.client, &1_000);
+    escrow.accept_job(&parties.freelancer);
+    escrow.accept_arbiter(&escrow.get_job().arbiter);
     escrow.fund(&parties.client);
     escrow.mark_delivered(&parties.freelancer, &0);
 

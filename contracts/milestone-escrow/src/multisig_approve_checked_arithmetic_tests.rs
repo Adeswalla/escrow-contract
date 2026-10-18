@@ -88,6 +88,8 @@ fn funded_multisig_escrow(
     );
 
     token_admin.mint(&client_addr, &1_000_i128);
+    escrow.accept_job(&freelancer_addr);
+    escrow.accept_arbiter(&arbiter_addr);
     escrow.fund(&client_addr);
 
     let mut signers = Vec::new(env);

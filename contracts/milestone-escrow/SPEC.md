@@ -76,6 +76,10 @@ stateDiagram-v2
     [*] --> Unfunded: initialize
     Unfunded --> Funded: fund
 
+    state "Accepted" as Accepted
+    Funded --> Accepted: accept_job and accept_arbiter
+    Funded --> Refunded: withdraw_unaccepted (window passed)
+
     state "Emergency paused (Ep)" as EP
     Funded --> EP: emergency_pause
     EP --> Funded: emergency_unpause, emergency_pause_admin_override
@@ -95,7 +99,8 @@ stateDiagram-v2
 
 | Flag | Key | Set by | Cleared by | Checked by |
 |---|---|---|---|---|
-| Funded | `JobMeta.funded` | `fund` | never | most settlement entry points (`NotFunded`) |
+| Funded | `JobMeta.funded`, `DataKey::FundedAt` | `fund` | never | most settlement entry points (`NotFunded`) |
+| Acceptance | `DataKey::Acceptance` (bit 1 freelancer, bit 2 arbiter) | `accept_job`, `accept_arbiter` | never | `mark_delivered`, `raise_dispute`, `resolve_dispute`, `apply_dispute_arbitration_split` (`NotAccepted`), `withdraw_unaccepted` |
 | Emergency pause | `DataKey::Ep` | `emergency_pause`, `emergency_pause_admin_override` | `emergency_unpause`, `emergency_pause_admin_override` | `ensure_not_paused` and the calculators listed below |
 | Admin pause | `DataKey::Paused` | `admin_pause_escrow` | `admin_resume_escrow` | `assert_not_paused` |
 | Cancel approval | `DataKey::CancelApproval` | `cancel_escrow` (first party) | `revoke_cancel_approval`, `cancel_escrow` (second party) | `cancel_escrow`, `revoke_cancel_approval` |
@@ -131,12 +136,15 @@ topic.
 | `fund` | client | `ensure_not_paused`; not funded | n/a | job `funded = true` | client → contract, total amount | `fund` |
 | `add_whitelisted_token` | admin | not funded; whitelist not full | n/a | n/a | none | `wtok` |
 | `remove_whitelisted_token` | admin | not funded; token present; not the last token | n/a | n/a | none | `wldel` |
+| `accept_job` | freelancer | not already accepted by the freelancer | n/a | sets freelancer acceptance | none | `acceptjob` |
+| `accept_arbiter` | arbiter | not already accepted by the arbiter | n/a | sets arbiter acceptance | none | `acceptarb` |
+| `withdraw_unaccepted` | client | `ensure_not_paused`; funded; not accepted by both; `ACCEPTANCE_WINDOW_SECONDS` (7 days) passed since funding | every milestone except `Released`, `Refunded` | `Refunded` | → client, sum of remaining | `unaccref` |
 
 ### Milestone workflow
 
 | Entry point | Signer(s) | Guards | Source status | Target status | Token movement | Event |
 |---|---|---|---|---|---|---|
-| `mark_delivered` | freelancer | `ensure_not_paused`; funded | `Pending` | `Delivered` | none | `deliver` |
+| `mark_delivered` | freelancer | `ensure_not_paused`; funded; accepted by both | `Pending` | `Delivered` | none | `deliver` |
 | `extend_milestone_deadline` | client | `assert_not_paused`; `extra_seconds > 0` | `Delivered`, `PartiallyReleased` | unchanged | none | `extend` |
 | `approve_partial` | client | `ensure_not_paused`; funded; `0 < amount <= remaining` | `Delivered`, `PartiallyReleased` | `PartiallyReleased`, or `Released` when fully paid | → freelancer, `amount` | `approve` |
 | `approve_milestone` | client | `ensure_not_paused`; funded | `Delivered` | `Released` | → freelancer, remaining | `approve` |
@@ -147,9 +155,9 @@ topic.
 
 | Entry point | Signer(s) | Guards | Source status | Target status | Token movement | Event |
 |---|---|---|---|---|---|---|
-| `raise_dispute` | client or freelancer | `ensure_not_paused`; funded; no dispute lock held | `Pending`, `Delivered`, `PartiallyReleased` | `Disputed` | none | `dispute` |
-| `resolve_dispute` | arbiter | `ensure_not_paused`; funded | `Disputed` | `Released` (release) or `Refunded` (refund) | → freelancer or → client, remaining capped at available balance | `resolve` |
-| `apply_dispute_arbitration_split` | arbiter | `ensure_not_paused`; funded | `Disputed` | `Refunded`, `Split` or `Released` depending on the shares | → client and → freelancer by `client_refund_bps`, capped at available balance | `resolve`, `arbsplit` |
+| `raise_dispute` | client or freelancer | `ensure_not_paused`; funded; no dispute lock held; accepted by both | `Pending`, `Delivered`, `PartiallyReleased` | `Disputed` | none | `dispute` |
+| `resolve_dispute` | arbiter | `ensure_not_paused`; funded; accepted by both | `Disputed` | `Released` (release) or `Refunded` (refund) | → freelancer or → client, remaining capped at available balance | `resolve` |
+| `apply_dispute_arbitration_split` | arbiter | `ensure_not_paused`; funded; accepted by both | `Disputed` | `Refunded`, `Split` or `Released` depending on the shares | → client and → freelancer by `client_refund_bps`, capped at available balance | `resolve`, `arbsplit` |
 
 ### Cancellation
 
@@ -243,10 +251,14 @@ change no milestone or escrow state.
 3. **Delivery precedes approval.** `approve_milestone` and `claim_auto_release`
    require `Delivered`; `approve_partial` requires `Delivered` or
    `PartiallyReleased`.
-4. **Disputes are resolved only by the arbiter or the admin.** A `Disputed`
+4. **Parties consent before work starts.** Delivery and dispute endpoints
+   require that both the freelancer (`accept_job`) and the arbiter
+   (`accept_arbiter`) accepted the job; otherwise the client can reclaim the
+   escrow with `withdraw_unaccepted` once the acceptance window has passed.
+5. **Disputes are resolved only by the arbiter or the admin.** A `Disputed`
    milestone is moved only by `resolve_dispute`, `apply_dispute_arbitration_split`
    (arbiter) or the admin override endpoints.
-5. **Who can move funds while paused.**
+6. **Who can move funds while paused.**
    - While emergency paused (`Ep`) or cancel locked, every endpoint guarded by
      `ensure_not_paused` is rejected: `fund`, `mark_delivered`,
      `approve_partial`, `approve_milestone`, `claim_auto_release`,
