@@ -28,6 +28,8 @@ Disputed → Released (arbiter favors freelancer)
 
 → Refunded (arbiter favors client)
 
+The full state machine, including every entry point, its required signers and the escrow-level locks, is specified in [`contracts/milestone-escrow/SPEC.md`](contracts/milestone-escrow/SPEC.md).
+
 ## Prerequisites
 
 - https://rustup.rs/  1.79+
