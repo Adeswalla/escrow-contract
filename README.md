@@ -30,6 +30,10 @@ Disputed → Released (arbiter favors freelancer)
 
 The full state machine, including every entry point, its required signers and the escrow-level locks, is specified in [`contracts/milestone-escrow/SPEC.md`](contracts/milestone-escrow/SPEC.md).
 
+## Security
+
+Roles, trust assumptions, admin powers and known risks are described in [`THREAT_MODEL.md`](THREAT_MODEL.md).
+
 ## Prerequisites
 
 - https://rustup.rs/  1.79+
