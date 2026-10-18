@@ -6924,6 +6924,8 @@ mod tax_withholding_split_refund_tests;
 #[cfg(test)]
 mod test;
 #[cfg(test)]
+mod event_docs_sync_tests;
+#[cfg(test)]
 mod test_emergency_pause;
 #[cfg(test)]
 mod test_payment_streaming_milestones;
