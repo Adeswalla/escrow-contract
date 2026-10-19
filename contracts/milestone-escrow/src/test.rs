@@ -13,6 +13,8 @@ use soroban_sdk::{
 
 #[path = "admin_override_refund_tests.rs"]
 mod admin_override_refund_tests;
+#[path = "admin_override_release_tests.rs"]
+mod admin_override_release_tests;
 #[path = "admin_pause_escrow_tests.rs"]
 mod admin_pause_escrow_tests;
 #[path = "admin_resume_escrow_footprint_tests.rs"]
