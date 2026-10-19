@@ -89,17 +89,18 @@ fn test_milestone_time_extensions_rejects_unauthorized_single_signature() {
     let env = Env::default();
     env.mock_all_auths();
     let amounts = vec![&env, 1_000_i128];
-    let (client_addr, _, _, _, _, contract_id, client) = setup_funded_escrow(&env, amounts);
+    let (client_addr, freelancer_addr, _, _, _, contract_id, client) = setup_funded_escrow(&env, amounts);
+    client.mark_delivered(&freelancer_addr, &0);
 
     // Only the client signs. The dual-consent guard in
-    // `milestone_time_extensions` (via `require_client_and_freelancer_consent`)
+    // `time_extensions_consent` (via `require_client_and_freelancer_consent`)
     // triggers when the freelancer's signature is missing, so a single-signed
-    // invocation must never reach the split arithmetic and must not mutate any
+    // invocation must never reach the extension logic and must not mutate any
     // on-chain state.
     let invoke = MockAuthInvoke {
         contract: &contract_id,
         fn_name: "time_extensions_consent",
-        args: (&1_000_i128, &1_i128, &2_i128).into_val(&env),
+        args: (&0u32, &100u32).into_val(&env),
         sub_invokes: &[],
     };
 
@@ -108,7 +109,7 @@ fn test_milestone_time_extensions_rejects_unauthorized_single_signature() {
             address: &client_addr,
             invoke: &invoke,
         }])
-        .try_milestone_time_extensions(&1_000, &1, &2);
+        .try_time_extensions_consent(&0, &100);
 
     assert!(
         matches!(result, Err(Err(_))),
@@ -152,14 +153,19 @@ fn deadline_extensions_accumulate_and_emit_new_total() {
     escrow.extend_milestone_deadline(&client_addr, &0, &100);
     escrow.extend_milestone_deadline(&client_addr, &0, &250);
 
+    // Capture events immediately after the last mutating call, before any
+    // read-only call (get_job, time_until_auto_release) which would reset the
+    // event log to an empty list since all_event_tuples reports only the most
+    // recent invocation.
+    let events = crate::all_event_tuples(&env);
+    let event = DeadlineExtendedEvent::from_val(&env, &events.last().unwrap().2);
+    assert_eq!(event.new_extension, 350);
+
     assert_eq!(escrow.time_until_auto_release(&0), initial + 350);
 
     let job = escrow.get_job();
     let milestone = job.milestones.get(0).unwrap();
-    let events = crate::all_event_tuples(&env);
-    let event = DeadlineExtendedEvent::from_val(&env, &events.last().unwrap().2);
     let expected_deadline = milestone.delivered_at + job.auto_release_seconds + 350;
-    assert_eq!(event.new_extension, 350);
     assert_eq!(event.new_deadline, expected_deadline);
 
     env.ledger().with_mut(|ledger| ledger.timestamp = event.new_deadline - 1);
@@ -365,7 +371,7 @@ macro_rules! time_ext_consent_invoke {
         MockAuthInvoke {
             contract: $contract_id,
             fn_name: "time_extensions_consent",
-            args: (&1_000_i128, &1_i128, &2_i128).into_val($env),
+            args: (&0u32, &100u32).into_val($env),
             sub_invokes: &[],
         }
     };
@@ -378,9 +384,10 @@ fn test_time_extensions_consent_succeeds_when_both_parties_sign() {
     let amounts = vec![&env, 1_000_i128];
     let (client_addr, freelancer_addr, _, _, _, contract_id, escrow) =
         setup_funded_escrow(&env, amounts);
+    escrow.mark_delivered(&freelancer_addr, &0);
 
     let invoke = time_ext_consent_invoke!(&env, &contract_id);
-    let split = escrow
+    let result = escrow
         .mock_auths(&[
             MockAuth {
                 address: &client_addr,
@@ -391,9 +398,9 @@ fn test_time_extensions_consent_succeeds_when_both_parties_sign() {
                 invoke: &invoke,
             },
         ])
-        .time_extensions_consent(&1_000, &1, &2);
+        .try_time_extensions_consent(&0, &100);
 
-    assert_eq!(split.first + split.second, 1_000);
+    assert_eq!(result, Ok(Ok(())));
 }
 
 #[test]
@@ -401,7 +408,9 @@ fn test_time_extensions_consent_reverts_when_only_client_signs() {
     let env = Env::default();
     env.mock_all_auths();
     let amounts = vec![&env, 1_000_i128];
-    let (client_addr, _, _, _, _, contract_id, escrow) = setup_funded_escrow(&env, amounts);
+    let (client_addr, freelancer_addr, _, _, _, contract_id, escrow) =
+        setup_funded_escrow(&env, amounts);
+    escrow.mark_delivered(&freelancer_addr, &0);
 
     let invoke = time_ext_consent_invoke!(&env, &contract_id);
     let result = escrow
@@ -409,7 +418,7 @@ fn test_time_extensions_consent_reverts_when_only_client_signs() {
             address: &client_addr,
             invoke: &invoke,
         }])
-        .try_time_extensions_consent(&1_000, &1, &2);
+        .try_time_extensions_consent(&0, &100);
 
     assert!(matches!(result, Err(Err(_))));
 }
@@ -420,6 +429,7 @@ fn test_time_extensions_consent_reverts_when_only_freelancer_signs() {
     env.mock_all_auths();
     let amounts = vec![&env, 1_000_i128];
     let (_, freelancer_addr, _, _, _, contract_id, escrow) = setup_funded_escrow(&env, amounts);
+    escrow.mark_delivered(&freelancer_addr, &0);
 
     let invoke = time_ext_consent_invoke!(&env, &contract_id);
     let result = escrow
@@ -427,7 +437,7 @@ fn test_time_extensions_consent_reverts_when_only_freelancer_signs() {
             address: &freelancer_addr,
             invoke: &invoke,
         }])
-        .try_time_extensions_consent(&1_000, &1, &2);
+        .try_time_extensions_consent(&0, &100);
 
     assert!(matches!(result, Err(Err(_))));
 }
@@ -437,23 +447,76 @@ fn test_time_extensions_consent_reverts_with_no_signatures() {
     let env = Env::default();
     env.mock_all_auths();
     let amounts = vec![&env, 1_000_i128];
-    let (_, _, _, _, _, _, escrow) = setup_funded_escrow(&env, amounts);
+    let (_, freelancer_addr, _, _, _, _, escrow) = setup_funded_escrow(&env, amounts);
+    escrow.mark_delivered(&freelancer_addr, &0);
 
     // Clear mock_all_auths behaviour by using an empty auth set.
     let result = escrow
         .mock_auths(&[])
-        .try_time_extensions_consent(&1_000, &1, &2);
+        .try_time_extensions_consent(&0, &100);
     assert!(matches!(result, Err(Err(_))));
 }
 
 #[test]
-fn test_time_extensions_consent_emits_event_naming_both_signers() {
+fn test_time_extensions_consent_extends_deadline() {
     let env = Env::default();
     env.mock_all_auths();
     let amounts = vec![&env, 1_000_i128];
-    let (client_addr, freelancer_addr, _, _, _, _, escrow) = setup_funded_escrow(&env, amounts);
+    let (_, freelancer_addr, _, _, _, _, escrow) = setup_funded_escrow(&env, amounts);
+    escrow.mark_delivered(&freelancer_addr, &0);
 
-    let split = escrow.time_extensions_consent(&1_000, &1, &2);
+    let initial = escrow.time_until_auto_release(&0);
+
+    escrow.time_extensions_consent(&0, &100);
+
+    assert_eq!(escrow.time_until_auto_release(&0), initial + 100);
+}
+
+#[test]
+fn test_time_extensions_consent_rejects_undelivered_milestone() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let amounts = vec![&env, 1_000_i128];
+    let (_, _, _, _, _, _, escrow) = setup_funded_escrow(&env, amounts);
+
+    let result = escrow.try_time_extensions_consent(&0, &100);
+    assert_eq!(result, Err(Ok(Error::InvalidStatus)));
+}
+
+#[test]
+fn test_time_extensions_consent_rejects_invalid_milestone() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let amounts = vec![&env, 1_000_i128];
+    let (_, freelancer_addr, _, _, _, _, escrow) = setup_funded_escrow(&env, amounts);
+    escrow.mark_delivered(&freelancer_addr, &0);
+
+    let result = escrow.try_time_extensions_consent(&1, &100);
+    assert_eq!(result, Err(Ok(Error::InvalidMilestone)));
+}
+
+#[test]
+fn test_time_extensions_consent_rejects_zero_extension() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let amounts = vec![&env, 1_000_i128];
+    let (_, freelancer_addr, _, _, _, _, escrow) = setup_funded_escrow(&env, amounts);
+    escrow.mark_delivered(&freelancer_addr, &0);
+
+    let result = escrow.try_time_extensions_consent(&0, &0);
+    assert_eq!(result, Err(Ok(Error::InvalidExtension)));
+}
+
+#[test]
+fn test_time_extensions_consent_emits_event_with_extension_details() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let amounts = vec![&env, 1_000_i128];
+    let (client_addr, freelancer_addr, _, _, _, contract_id, escrow) =
+        setup_funded_escrow(&env, amounts);
+    escrow.mark_delivered(&freelancer_addr, &0);
+
+    escrow.time_extensions_consent(&0, &100);
 
     let topic: Val = symbol_short!("m_extcns").into_val(&env);
     let mut found = false;
@@ -464,25 +527,13 @@ fn test_time_extensions_consent_emits_event_naming_both_signers() {
                 let data = TimeExtConsentEvent::from_val(&env, &e.2);
                 assert_eq!(data.client, client_addr);
                 assert_eq!(data.freelancer, freelancer_addr);
-                assert_eq!(data.freelancer_share, split.first);
-                assert_eq!(data.client_refund, split.second);
+                assert_eq!(data.milestone_index, 0);
+                assert_eq!(data.extra_seconds, 100);
+                assert_eq!(data.new_extension, 100);
             }
         }
     }
-    assert!(found, "expected a m_extcns event naming both signers");
-}
-
-#[test]
-fn test_time_extensions_consent_matches_unauthenticated_calculator() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let amounts = vec![&env, 1_000_i128];
-    let (_, _, _, _, _, _, escrow) = setup_funded_escrow(&env, amounts);
-
-    let calc = escrow.milestone_time_extensions(&1_000, &3, &7);
-    let gated = escrow.time_extensions_consent(&1_000, &3, &7);
-    assert_eq!(calc.first, gated.first);
-    assert_eq!(calc.second, gated.second);
+    assert!(found, "expected a m_extcns event with extension details");
 }
 
 // ── #581: checked arithmetic in time_until_auto_release ──────────────────────
@@ -588,7 +639,7 @@ fn time_extensions_consent_on_uninitialized_returns_not_initialized() {
 
     // No initialize call — Job metadata is absent.
     assert_eq!(
-        client.try_time_extensions_consent(&1_000, &1, &2),
+        client.try_time_extensions_consent(&0u32, &100u32),
         Err(Ok(Error::NotInitialized))
     );
 
@@ -625,7 +676,7 @@ fn time_extensions_consent_illegal_source_state_no_mutation_when_locked() {
     // further ledger access, and must not mutate storage (lock stays set, no
     // event, no partial write).
     assert_eq!(
-        escrow.try_time_extensions_consent(&1_000, &1, &2),
+        escrow.try_time_extensions_consent(&0u32, &100u32),
         Err(Ok(Error::TimeExtInProgress))
     );
 
@@ -669,7 +720,7 @@ fn time_extensions_consent_unauthorized_no_mutation_single_signature() {
             address: &client_addr,
             invoke: &invoke,
         }])
-        .try_time_extensions_consent(&1_000, &1, &2);
+        .try_time_extensions_consent(&0u32, &100u32);
 
     // Missing freelancer signature panics at host level (Err(Err(_))), not a
     // contract Error, and must not mutate storage.
@@ -696,7 +747,7 @@ fn time_extensions_consent_illegal_source_state_no_mutation_when_paused() {
     escrow.admin_pause_escrow(&admin_addr);
 
     assert_eq!(
-        escrow.try_time_extensions_consent(&1_000, &1, &2),
+        escrow.try_time_extensions_consent(&0u32, &100u32),
         Err(Ok(Error::Paused))
     );
 
@@ -718,12 +769,20 @@ fn time_extensions_consent_overflow_i128_max_returns_invalid_amount() {
     let env = Env::default();
     env.mock_all_auths();
     let amounts = vec![&env, 1_000_i128];
-    let (_, _, _, _, _, contract_id, escrow) = setup_funded_escrow(&env, amounts);
+    let (_, freelancer_addr, _, _, _, contract_id, escrow) = setup_funded_escrow(&env, amounts);
+    escrow.mark_delivered(&freelancer_addr, &0);
 
-    // amount * elapsed_seconds overflows i128 inside split_round_nearest.
+    // Pre-load the existing extension to u32::MAX so that adding any
+    // positive extra_seconds will overflow the u32 checked_add.
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .temporary()
+            .set(&DataKey::TimeExt(0u32), &u32::MAX);
+    });
+
     assert_eq!(
-        escrow.try_time_extensions_consent(&i128::MAX, &i128::MAX, &i128::MAX),
-        Err(Ok(Error::InvalidAmount))
+        escrow.try_time_extensions_consent(&0u32, &1u32),
+        Err(Ok(Error::InvalidExtension))
     );
 
     // No partial write must survive the failure.
@@ -741,12 +800,14 @@ fn time_extensions_consent_overflow_i128_min_returns_invalid_ratio() {
     let env = Env::default();
     env.mock_all_auths();
     let amounts = vec![&env, 1_000_i128];
-    let (_, _, _, _, _, contract_id, escrow) = setup_funded_escrow(&env, amounts);
+    let (_, freelancer_addr, _, _, _, contract_id, escrow) = setup_funded_escrow(&env, amounts);
+    escrow.mark_delivered(&freelancer_addr, &0);
 
-    // elapsed_seconds = i128::MIN is <0, so InvalidRatio before arithmetic.
+    // extra_seconds = 0 is explicitly rejected as InvalidExtension before any
+    // arithmetic runs (equivalent to the old zero-denominator / negative-ratio guard).
     assert_eq!(
-        escrow.try_time_extensions_consent(&1_000, &i128::MIN, &2),
-        Err(Ok(Error::InvalidRatio))
+        escrow.try_time_extensions_consent(&0u32, &0u32),
+        Err(Ok(Error::InvalidExtension))
     );
 
     let lock_held: bool = env.as_contract(&contract_id, || {
@@ -763,10 +824,18 @@ fn time_extensions_consent_overflow_no_partial_write_and_lock_cleared() {
     let env = Env::default();
     env.mock_all_auths();
     let amounts = vec![&env, 1_000_i128];
-    let (_, _, _, _, _, contract_id, escrow) = setup_funded_escrow(&env, amounts);
+    let (_, freelancer_addr, _, _, _, contract_id, escrow) = setup_funded_escrow(&env, amounts);
+    escrow.mark_delivered(&freelancer_addr, &0);
 
-    let result = escrow.try_time_extensions_consent(&i128::MAX, &1, &2);
-    assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+    // Set existing extension to u32::MAX so checked_add overflows.
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .temporary()
+            .set(&DataKey::TimeExt(0u32), &u32::MAX);
+    });
+
+    let result = escrow.try_time_extensions_consent(&0u32, &1u32);
+    assert_eq!(result, Err(Ok(Error::InvalidExtension)));
     // The test env only records events from the latest invocation, so the
     // rejected call must have emitted none.
     assert_eq!(

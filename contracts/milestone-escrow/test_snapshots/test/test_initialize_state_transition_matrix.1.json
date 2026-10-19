@@ -940,6 +940,14 @@
                           },
                           {
                             "key": {
+                              "symbol": "created_at"
+                            },
+                            "val": {
+                              "u64": "0"
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "freelancer"
                             },
                             "val": {
@@ -1334,6 +1342,14 @@
                           },
                           {
                             "key": {
+                              "symbol": "created_at"
+                            },
+                            "val": {
+                              "u64": "0"
+                            }
+                          },
+                          {
+                            "key": {
                               "symbol": "freelancer"
                             },
                             "val": {
@@ -1643,6 +1659,14 @@
                             },
                             "val": {
                               "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "created_at"
+                            },
+                            "val": {
+                              "u64": "0"
                             }
                           },
                           {

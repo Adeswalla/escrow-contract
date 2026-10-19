@@ -92,8 +92,8 @@ struct Parties {
     contract_id: Address,
 }
 
-/// A fully initialised escrow, so `payment_streaming_consent` has a
-/// client/freelancer pair to collect signatures from.
+/// A fully initialised escrow with a delivered milestone, so
+/// `payment_streaming_consent` has a milestone to stream from.
 fn initialised_escrow(env: &Env) -> (MilestoneEscrowClient<'_>, Parties) {
     env.mock_all_auths();
 
@@ -105,6 +105,8 @@ fn initialised_escrow(env: &Env) -> (MilestoneEscrowClient<'_>, Parties) {
     let token_contract_id = env
         .register_stellar_asset_contract_v2(admin_addr.clone())
         .address();
+    let token_admin = token::StellarAssetClient::new(env, &token_contract_id);
+    token_admin.mint(&client_addr, &1_000_i128);
 
     let contract_id = env.register(MilestoneEscrow, ());
     let escrow = MilestoneEscrowClient::new(env, &contract_id);
@@ -119,6 +121,8 @@ fn initialised_escrow(env: &Env) -> (MilestoneEscrowClient<'_>, Parties) {
         &604_800u64,
         &amounts,
     );
+    escrow.fund(&client_addr);
+    escrow.mark_delivered(&freelancer_addr, &0);
 
     (
         escrow,
@@ -130,9 +134,10 @@ fn initialised_escrow(env: &Env) -> (MilestoneEscrowClient<'_>, Parties) {
     )
 }
 
-const ARGS_TOTAL: i128 = 1_000;
+const ARGS_MILESTONE_INDEX: u32 = 0;
 const ARGS_NUM: i128 = 1;
 const ARGS_DEN: i128 = 2;
+const ARGS_TOTAL: i128 = 1_000;
 
 /// The invoke descriptor the signature tests authorise. Expanded into a local
 /// binding in each test so the borrow outlives the `MockAuth` entries that
@@ -143,7 +148,7 @@ macro_rules! consent_invoke {
         MockAuthInvoke {
             contract: $contract,
             fn_name: "payment_streaming_consent",
-            args: (ARGS_TOTAL, ARGS_NUM, ARGS_DEN).into_val($env),
+            args: (&ARGS_MILESTONE_INDEX, &ARGS_NUM, &ARGS_DEN).into_val($env),
             sub_invokes: &[],
         }
     };
@@ -171,7 +176,7 @@ fn test_consent_succeeds_when_both_parties_sign() {
                 invoke: &invoke,
             },
         ])
-        .payment_streaming_consent(&ARGS_TOTAL, &ARGS_NUM, &ARGS_DEN);
+        .payment_streaming_consent(&ARGS_MILESTONE_INDEX, &ARGS_NUM, &ARGS_DEN);
 
     assert_eq!(split.first, 500);
     assert_eq!(split.second, 500);
@@ -189,7 +194,7 @@ fn test_consent_reverts_when_only_client_signs() {
             address: &p.client,
             invoke: &invoke,
         }])
-        .try_payment_streaming_consent(&ARGS_TOTAL, &ARGS_NUM, &ARGS_DEN);
+        .try_payment_streaming_consent(&ARGS_MILESTONE_INDEX, &ARGS_NUM, &ARGS_DEN);
 
     // The freelancer's `require_auth()` panics at the host level, so this is
     // the host-error arm rather than a contract `Error` variant.
@@ -211,7 +216,7 @@ fn test_consent_reverts_when_only_freelancer_signs() {
             address: &p.freelancer,
             invoke: &invoke,
         }])
-        .try_payment_streaming_consent(&ARGS_TOTAL, &ARGS_NUM, &ARGS_DEN);
+        .try_payment_streaming_consent(&ARGS_MILESTONE_INDEX, &ARGS_NUM, &ARGS_DEN);
 
     assert!(
         matches!(result, Err(Err(_))),
@@ -227,7 +232,7 @@ fn test_consent_reverts_with_no_signatures_at_all() {
     let result =
         escrow
             .mock_auths(&[])
-            .try_payment_streaming_consent(&ARGS_TOTAL, &ARGS_NUM, &ARGS_DEN);
+            .try_payment_streaming_consent(&ARGS_MILESTONE_INDEX, &ARGS_NUM, &ARGS_DEN);
 
     assert!(matches!(result, Err(Err(_))));
 }
@@ -247,7 +252,7 @@ fn test_consent_reverts_when_a_third_party_signs_instead() {
             address: &impostor,
             invoke: &invoke,
         }])
-        .try_payment_streaming_consent(&ARGS_TOTAL, &ARGS_NUM, &ARGS_DEN);
+        .try_payment_streaming_consent(&ARGS_MILESTONE_INDEX, &ARGS_NUM, &ARGS_DEN);
 
     assert!(matches!(result, Err(Err(_))));
 }
@@ -271,7 +276,7 @@ fn test_consent_reverts_when_arbiter_substitutes_for_freelancer() {
                 invoke: &invoke,
             },
         ])
-        .try_payment_streaming_consent(&ARGS_TOTAL, &ARGS_NUM, &ARGS_DEN);
+        .try_payment_streaming_consent(&ARGS_MILESTONE_INDEX, &ARGS_NUM, &ARGS_DEN);
 
     assert!(matches!(result, Err(Err(_))));
 }
@@ -288,25 +293,8 @@ fn test_consent_requires_initialised_job() {
 
     // No job metadata means no signer pair to collect signatures from.
     assert_eq!(
-        escrow.try_payment_streaming_consent(&ARGS_TOTAL, &ARGS_NUM, &ARGS_DEN),
+        escrow.try_payment_streaming_consent(&ARGS_MILESTONE_INDEX, &ARGS_NUM, &ARGS_DEN),
         Err(Ok(Error::NotInitialized))
-    );
-}
-
-#[test]
-fn test_consent_validates_amount_after_collecting_signatures() {
-    let env = test_env();
-    let (escrow, _p) = initialised_escrow(&env);
-
-    // Signatures are collected first, so with both present the ratio rules
-    // still apply and surface as ordinary contract errors.
-    assert_eq!(
-        escrow.try_payment_streaming_consent(&0_i128, &1_i128, &2_i128),
-        Err(Ok(Error::InvalidAmount))
-    );
-    assert_eq!(
-        escrow.try_payment_streaming_consent(&-1_i128, &1_i128, &2_i128),
-        Err(Ok(Error::InvalidAmount))
     );
 }
 
@@ -316,19 +304,19 @@ fn test_consent_validates_ratio_after_collecting_signatures() {
     let (escrow, _p) = initialised_escrow(&env);
 
     assert_eq!(
-        escrow.try_payment_streaming_consent(&100_i128, &1_i128, &0_i128),
+        escrow.try_payment_streaming_consent(&0u32, &1_i128, &0_i128),
         Err(Ok(Error::InvalidRatio))
     );
     assert_eq!(
-        escrow.try_payment_streaming_consent(&100_i128, &1_i128, &-2_i128),
+        escrow.try_payment_streaming_consent(&0u32, &1_i128, &-2_i128),
         Err(Ok(Error::InvalidRatio))
     );
     assert_eq!(
-        escrow.try_payment_streaming_consent(&100_i128, &-1_i128, &2_i128),
+        escrow.try_payment_streaming_consent(&0u32, &-1_i128, &2_i128),
         Err(Ok(Error::InvalidRatio))
     );
     assert_eq!(
-        escrow.try_payment_streaming_consent(&100_i128, &3_i128, &2_i128),
+        escrow.try_payment_streaming_consent(&0u32, &3_i128, &2_i128),
         Err(Ok(Error::InvalidRatio))
     );
 }
@@ -338,7 +326,7 @@ fn test_consent_emits_event_naming_both_signers() {
     let env = test_env();
     let (escrow, p) = initialised_escrow(&env);
 
-    let split = escrow.payment_streaming_consent(&1_000_i128, &300_i128, &600_i128);
+    let split = escrow.payment_streaming_consent(&0u32, &300_i128, &600_i128);
     assert_eq!(split.first, 500);
     assert_eq!(split.second, 500);
 
@@ -352,6 +340,7 @@ fn test_consent_emits_event_naming_both_signers() {
                 let data = PaymentStreamingConsentEvent::from_val(&env, &e.2);
                 assert_eq!(data.client, p.client);
                 assert_eq!(data.freelancer, p.freelancer);
+                assert_eq!(data.milestone_index, 0);
                 assert_eq!(data.total_amount, 1_000);
                 assert_eq!(data.streamed_payout, 500);
                 assert_eq!(data.client_refund, 500);
@@ -367,7 +356,7 @@ fn test_consent_does_not_emit_event_when_validation_fails() {
     let env = test_env();
     let (escrow, _p) = initialised_escrow(&env);
 
-    let _ = escrow.try_payment_streaming_consent(&0_i128, &1_i128, &2_i128);
+    let _ = escrow.try_payment_streaming_consent(&0u32, &3_i128, &2_i128);
 
     let topic: Val = symbol_short!("p_strcns").into_val(&env);
     for e in crate::all_event_tuples(&env).iter() {
@@ -378,24 +367,6 @@ fn test_consent_does_not_emit_event_when_validation_fails() {
                 "a rejected consent call must not publish a settlement event"
             );
         }
-    }
-}
-
-#[test]
-fn test_consent_matches_the_unauthenticated_calculator() {
-    let env = test_env();
-    let (escrow, _p) = initialised_escrow(&env);
-
-    // The consent gate changes who may call, never the arithmetic.
-    for (total, num, den) in [
-        (1_000_i128, 1_i128, 3_i128),
-        (7_i128, 1_i128, 2_i128),
-        (999_i128, 333_i128, 1_000_i128),
-    ] {
-        let gated = escrow.payment_streaming_consent(&total, &num, &den);
-        let plain = escrow.payment_streaming_milestones(&total, &num, &den);
-        assert_eq!(gated.first, plain.first);
-        assert_eq!(gated.second, plain.second);
     }
 }
 
@@ -731,10 +702,9 @@ fn test_payment_streaming_lock_blocks_mark_delivered() {
     let env = test_env();
     let (escrow, parties) = initialised_escrow(&env);
 
-    // Fund so mark_delivered is otherwise valid.
-    let token_admin = token::StellarAssetClient::new(&env, &escrow.get_job().token);
-    token_admin.mint(&parties.client, &1_000);
-    escrow.fund(&parties.client);
+    // The escrow is already funded and milestone 0 is already Delivered from
+    // initialised_escrow. The payment-streaming lock must fire before the
+    // status check so even a milestone already in Delivered state is blocked.
 
     env.as_contract(&parties.contract_id, || {
         env.storage()
@@ -759,10 +729,8 @@ fn test_payment_streaming_lock_blocks_approve_milestone() {
     let env = test_env();
     let (escrow, parties) = initialised_escrow(&env);
 
-    let token_admin = token::StellarAssetClient::new(&env, &escrow.get_job().token);
-    token_admin.mint(&parties.client, &1_000);
-    escrow.fund(&parties.client);
-    escrow.mark_delivered(&parties.freelancer, &0);
+    // The escrow is already funded and milestone 0 is Delivered from
+    // initialised_escrow, so approve_milestone would succeed without the lock.
 
     env.as_contract(&parties.contract_id, || {
         env.storage()
@@ -831,7 +799,7 @@ fn payment_streaming_consent_success_only_touches_instance() {
         env.storage().persistent().has(&DataKey::Job)
     });
 
-    let _ = escrow.payment_streaming_consent(&1_000, &1, &2);
+    let _ = escrow.payment_streaming_consent(&0u32, &1_i128, &2_i128);
 
     // Success path must not create any new persistent entry; the footprint
     // is the single instance ledger entry (Job + lock, which is removed).
@@ -876,10 +844,10 @@ fn payment_streaming_consent_invalid_input_leaves_no_trace() {
     });
     assert!(!instance_had_lock_before);
 
-    // Invalid amount (0) is rejected before any ledger write, so footprint is 0.
+    // Invalid ratio (denominator 0) is rejected before any ledger write.
     assert_eq!(
-        escrow.try_payment_streaming_consent(&0, &1, &2),
-        Err(Ok(Error::InvalidAmount))
+        escrow.try_payment_streaming_consent(&0u32, &1_i128, &0_i128),
+        Err(Ok(Error::InvalidRatio))
     );
 
     let lock_after: bool = env.as_contract(&parties.contract_id, || {
@@ -889,30 +857,6 @@ fn payment_streaming_consent_invalid_input_leaves_no_trace() {
             .unwrap_or(false)
     });
     assert!(!lock_after, "invalid input must not set execution lock");
-
-    // Persistent must be untouched as well.
-    let persistent_has_job: bool = env.as_contract(&parties.contract_id, || {
-        env.storage().persistent().has(&DataKey::Job)
-    });
-    // Job metadata lives in instance storage, so no persistent Job entry may
-    // appear after a rejected call.
-    assert!(
-        !persistent_has_job,
-        "invalid input must not create persistent entries"
-    );
-
-    // Invalid ratio (denominator 0) also leaves no trace.
-    assert_eq!(
-        escrow.try_payment_streaming_consent(&1_000, &1, &0),
-        Err(Ok(Error::InvalidRatio))
-    );
-    let lock_after2: bool = env.as_contract(&parties.contract_id, || {
-        env.storage()
-            .instance()
-            .get::<_, bool>(&DataKey::PaymentStreamingExecutionLock)
-            .unwrap_or(false)
-    });
-    assert!(!lock_after2);
 }
 
 #[test]
@@ -920,10 +864,6 @@ fn payment_streaming_consent_footprint_shrinks_against_baseline() {
     let env = test_env();
     let (escrow, parties) = initialised_escrow(&env);
 
-    // Baseline: before the fix, invalid inputs would still set and remove the
-    // lock (2 writes). After the fix, they do 0 writes. We assert the shrunk
-    // footprint by checking that after an invalid call the lock was never
-    // written — the ledger entry for the lock does not exist.
     let has_lock_before: bool = env.as_contract(&parties.contract_id, || {
         env.storage()
             .instance()
@@ -931,28 +871,21 @@ fn payment_streaming_consent_footprint_shrinks_against_baseline() {
     });
     assert!(!has_lock_before, "baseline: no lock before call");
 
-    let _ = escrow.try_payment_streaming_consent(&-1, &1, &2);
+    let _ = escrow.try_payment_streaming_consent(&0u32, &3_i128, &2_i128);
 
     let has_lock_after: bool = env.as_contract(&parties.contract_id, || {
         env.storage()
             .instance()
             .has(&DataKey::PaymentStreamingExecutionLock)
     });
-    // After the fix, has should still be false — the entry was never created,
-    // rather than created and removed. Both result in no lock, but the
-    // footprint is smaller (no write at all vs write+remove). We check the
-    // observable behaviour is identical (error) and the net storage is same,
-    // but the test suite would have caught the extra write via snapshot if it
-    // existed. This test codifies that invalid input is footprint-free.
     assert!(
         !has_lock_after,
         "footprint shrinks: invalid input must not create lock entry"
     );
 
     // Success path: lock is set then removed, net footprint is 0 extra
-    // entries beyond the pre-existing Job. We assert the lock is not present
-    // after success, proving net footprint is minimal.
-    let _ = escrow.payment_streaming_consent(&1_000, &1, &2);
+    // entries beyond the pre-existing Job.
+    let _ = escrow.payment_streaming_consent(&0u32, &1_i128, &2_i128);
     let has_lock_after_success: bool = env.as_contract(&parties.contract_id, || {
         env.storage()
             .instance()

@@ -11128,100 +11128,100 @@ fn setup_test_env(env: &Env) -> (Address, Address, Address, Address, u64) {
     (admin, client_addr, freelancer_addr, token, auto_release)
 }
 
+/// Helper: create a fully initialized (and funded) escrow, returning
+/// `(escrow_client, admin_addr)` so the tests can pass admin to
+/// `escrow_interest_yield`.
+fn setup_interest_yield_escrow(env: &Env) -> (MilestoneEscrowClient<'_>, Address) {
+    env.mock_all_auths();
+    let (_, _, _, admin, _, _, escrow) = setup_funded_escrow(env, vec![env, 1_000_i128]);
+    (escrow, admin)
+}
+
 #[test]
 fn test_escrow_interest_yield_calculation_basic() {
     let env = Env::default();
-    let contract_id = env.register(MilestoneEscrow, ());
-    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let (client, admin) = setup_interest_yield_escrow(&env);
 
     // 10,000 principal, 500 bps (5%), 1 full year (31,536,000s)
-    let yield_amt = client.escrow_interest_yield(&10_000_i128, &500_i128, &31_536_000_i128);
+    let yield_amt = client.escrow_interest_yield(&admin, &10_000_i128, &500_i128, &31_536_000_i128);
     assert_eq!(yield_amt, 500);
 }
 
 #[test]
 fn test_escrow_interest_yield_calculation_half_year() {
     let env = Env::default();
-    let contract_id = env.register(MilestoneEscrow, ());
-    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let (client, admin) = setup_interest_yield_escrow(&env);
 
     // 10,000 principal, 1,000 bps (10%), 6 months (15,768,000s)
-    let yield_amt = client.escrow_interest_yield(&10_000_i128, &1_000_i128, &15_768_000_i128);
+    let yield_amt = client.escrow_interest_yield(&admin, &10_000_i128, &1_000_i128, &15_768_000_i128);
     assert_eq!(yield_amt, 500);
 }
 
 #[test]
 fn test_escrow_interest_yield_zero_principal_fails() {
     let env = Env::default();
-    let contract_id = env.register(MilestoneEscrow, ());
-    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let (client, admin) = setup_interest_yield_escrow(&env);
 
-    let res = client.try_escrow_interest_yield(&0_i128, &500_i128, &31_536_000_i128);
+    let res = client.try_escrow_interest_yield(&admin, &0_i128, &500_i128, &31_536_000_i128);
     assert_eq!(res, Err(Ok(Error::InvalidAmount)));
 }
 
 #[test]
 fn test_escrow_interest_yield_negative_principal_fails() {
     let env = Env::default();
-    let contract_id = env.register(MilestoneEscrow, ());
-    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let (client, admin) = setup_interest_yield_escrow(&env);
 
-    let res = client.try_escrow_interest_yield(&-100_i128, &500_i128, &31_536_000_i128);
+    let res = client.try_escrow_interest_yield(&admin, &-100_i128, &500_i128, &31_536_000_i128);
     assert_eq!(res, Err(Ok(Error::InvalidAmount)));
 }
 
 #[test]
 fn test_escrow_interest_yield_zero_rate_fails() {
     let env = Env::default();
-    let contract_id = env.register(MilestoneEscrow, ());
-    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let (client, admin) = setup_interest_yield_escrow(&env);
 
-    let res = client.try_escrow_interest_yield(&10_000_i128, &0_i128, &31_536_000_i128);
+    let res = client.try_escrow_interest_yield(&admin, &10_000_i128, &0_i128, &31_536_000_i128);
     assert_eq!(res, Err(Ok(Error::InvalidAmount)));
 }
 
 #[test]
 fn test_escrow_interest_yield_negative_rate_fails() {
     let env = Env::default();
-    let contract_id = env.register(MilestoneEscrow, ());
-    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let (client, admin) = setup_interest_yield_escrow(&env);
 
-    let res = client.try_escrow_interest_yield(&10_000_i128, &-10_i128, &31_536_000_i128);
+    let res = client.try_escrow_interest_yield(&admin, &10_000_i128, &-10_i128, &31_536_000_i128);
     assert_eq!(res, Err(Ok(Error::InvalidAmount)));
 }
 
 #[test]
 fn test_escrow_interest_yield_excessive_rate_fails() {
     let env = Env::default();
-    let contract_id = env.register(MilestoneEscrow, ());
-    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let (client, admin) = setup_interest_yield_escrow(&env);
 
-    let res = client.try_escrow_interest_yield(&10_000_i128, &10_001_i128, &31_536_000_i128);
+    let res = client.try_escrow_interest_yield(&admin, &10_000_i128, &10_001_i128, &31_536_000_i128);
     assert_eq!(res, Err(Ok(Error::InvalidRatio)));
 }
 
 #[test]
 fn test_escrow_interest_yield_max_rate_succeeds() {
     let env = Env::default();
-    let contract_id = env.register(MilestoneEscrow, ());
-    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let (client, admin) = setup_interest_yield_escrow(&env);
 
     // 100% rate = 10,000 bps
-    let yield_amt = client.escrow_interest_yield(&10_000_i128, &10_000_i128, &31_536_000_i128);
+    let yield_amt = client.escrow_interest_yield(&admin, &10_000_i128, &10_000_i128, &31_536_000_i128);
     assert_eq!(yield_amt, 10_000);
 }
 
 #[test]
 fn test_escrow_interest_yield_emits_one_structured_event() {
     let env = Env::default();
-    let contract_id = env.register(MilestoneEscrow, ());
-    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let (client, admin) = setup_interest_yield_escrow(&env);
 
     let principal = 10_000_i128;
     let annual_rate_bps = 500_i128;
     let duration_seconds = 31_536_000_i128;
     let yield_amount =
-        client.escrow_interest_yield(&principal, &annual_rate_bps, &duration_seconds);
+        client.escrow_interest_yield(&admin, &principal, &annual_rate_bps, &duration_seconds);
 
     let topic: Val = symbol_short!("intyield").into_val(&env);
     let events = crate::all_event_tuples(&env);
@@ -11244,10 +11244,9 @@ fn test_escrow_interest_yield_emits_one_structured_event() {
 #[test]
 fn test_escrow_interest_yield_error_emits_no_event() {
     let env = Env::default();
-    let contract_id = env.register(MilestoneEscrow, ());
-    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let (client, admin) = setup_interest_yield_escrow(&env);
 
-    let result = client.try_escrow_interest_yield(&0_i128, &500_i128, &31_536_000_i128);
+    let result = client.try_escrow_interest_yield(&admin, &0_i128, &500_i128, &31_536_000_i128);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
     assert!(crate::all_event_tuples(&env).is_empty());
 }
@@ -11281,33 +11280,30 @@ fn test_admin_accrue_yield_rejects_i128_extremes() {
 #[test]
 fn test_escrow_interest_yield_zero_duration_fails() {
     let env = Env::default();
-    let contract_id = env.register(MilestoneEscrow, ());
-    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let (client, admin) = setup_interest_yield_escrow(&env);
 
-    let res = client.try_escrow_interest_yield(&10_000_i128, &500_i128, &0_i128);
+    let res = client.try_escrow_interest_yield(&admin, &10_000_i128, &500_i128, &0_i128);
     assert_eq!(res, Err(Ok(Error::InvalidAmount)));
 }
 
 #[test]
 fn test_escrow_interest_yield_negative_duration_fails() {
     let env = Env::default();
-    let contract_id = env.register(MilestoneEscrow, ());
-    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let (client, admin) = setup_interest_yield_escrow(&env);
 
-    let res = client.try_escrow_interest_yield(&10_000_i128, &500_i128, &-100_i128);
+    let res = client.try_escrow_interest_yield(&admin, &10_000_i128, &500_i128, &-100_i128);
     assert_eq!(res, Err(Ok(Error::InvalidAmount)));
 }
 
 #[test]
 fn test_escrow_interest_yield_overflow_fails() {
     let env = Env::default();
-    let contract_id = env.register(MilestoneEscrow, ());
-    let client = MilestoneEscrowClient::new(&env, &contract_id);
+    let (client, admin) = setup_interest_yield_escrow(&env);
 
-    let res = client.try_escrow_interest_yield(&i128::MAX, &10_000_i128, &31_536_000_i128);
+    let res = client.try_escrow_interest_yield(&admin, &i128::MAX, &10_000_i128, &31_536_000_i128);
     assert_eq!(res, Err(Ok(Error::InvalidAmount)));
 
-    let res_min = client.try_escrow_interest_yield(&i128::MIN, &10_000_i128, &31_536_000_i128);
+    let res_min = client.try_escrow_interest_yield(&admin, &i128::MIN, &10_000_i128, &31_536_000_i128);
     assert_eq!(res_min, Err(Ok(Error::InvalidAmount)));
 }
 
