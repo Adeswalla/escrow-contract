@@ -123,6 +123,13 @@ pub enum Error {
     /// A settlement asked to distribute more than the contract currently
     /// holds in the escrowed token.
     InsufficientBalance = 37,
+    /// `initialize` was called with overlapping party addresses.  The escrow
+    /// trust model requires four distinct addresses: the admin (platform),
+    /// client, freelancer, and arbiter (neutral dispute resolver) must all
+    /// be different.  Any collision — admin == client, admin == freelancer,
+    /// arbiter == client, arbiter == freelancer, or client == freelancer —
+    /// removes an independent check-and-balance and is rejected.
+    InvalidParties = 38,
 }
 
 const MAX_TREASURY_FEE_BPS: u32 = 2000;
@@ -2368,6 +2375,15 @@ impl MilestoneEscrow {
     ///   The check is applied in parameter order: `admin`, `client`,
     ///   `freelancer`, `arbiter`, `token`.
     ///
+    /// * [`Error::InvalidParties`] – Two or more party addresses collide.
+    ///   The escrow trust model requires four distinct addresses: the admin
+    ///   (platform), client, freelancer, and arbiter (neutral dispute
+    ///   resolver) must all be different.  Any of the following collisions
+    ///   is rejected: `client == freelancer`, `arbiter == client`,
+    ///   `arbiter == freelancer`, `admin == client`, `admin == freelancer`.
+    ///   The check runs immediately after the zero-address validation so a
+    ///   collision is caught before any milestone amount arithmetic runs.
+    ///
     /// * [`Error::InvalidAmount`] – Any of the following conditions:
     ///   - `milestone_amounts` is empty (no milestones to escrow).
     ///   - Any individual milestone amount is `≤ 0` (zero or negative amounts
@@ -2426,6 +2442,19 @@ impl MilestoneEscrow {
         Self::validate_address(&env, &freelancer)?;
         Self::validate_address(&env, &arbiter)?;
         Self::validate_address(&env, &token)?;
+
+        // Party-distinctness check (issue #667): the escrow's protection
+        // depends on four independent roles.  Collisions remove checks and
+        // balances — e.g. client == arbiter lets the client resolve their own
+        // disputes, and admin == client gives the client every admin override.
+        if client == freelancer
+            || arbiter == client
+            || arbiter == freelancer
+            || admin == client
+            || admin == freelancer
+        {
+            return Err(Error::InvalidParties);
+        }
 
         // milestone_count is u32 (Soroban Vec::len() returns u32) so no cast
         // is needed and there is no overflow risk on the count itself.
@@ -3687,7 +3716,8 @@ impl MilestoneEscrow {
             | MilestoneStatus::Delivered
             | MilestoneStatus::PartiallyReleased
             | MilestoneStatus::Released
-            | MilestoneStatus::Refunded => return Err(Error::InvalidStatus),
+            | MilestoneStatus::Refunded
+            | MilestoneStatus::Split => return Err(Error::InvalidStatus),
         }
 
         let remaining = milestone
@@ -7614,9 +7644,10 @@ impl MilestoneEscrow {
             MilestoneStatus::Pending
             | MilestoneStatus::Delivered
             | MilestoneStatus::PartiallyReleased => {}
-            MilestoneStatus::Released | MilestoneStatus::Refunded | MilestoneStatus::Disputed => {
-                return Err(Error::InvalidStatus)
-            }
+            MilestoneStatus::Released
+            | MilestoneStatus::Refunded
+            | MilestoneStatus::Disputed
+            | MilestoneStatus::Split => return Err(Error::InvalidStatus),
         }
 
         let token_client = token::Client::new(&env, &meta.token);
