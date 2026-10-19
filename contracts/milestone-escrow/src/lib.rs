@@ -3687,7 +3687,8 @@ impl MilestoneEscrow {
             | MilestoneStatus::Delivered
             | MilestoneStatus::PartiallyReleased
             | MilestoneStatus::Released
-            | MilestoneStatus::Refunded => return Err(Error::InvalidStatus),
+            | MilestoneStatus::Refunded
+            | MilestoneStatus::Split => return Err(Error::InvalidStatus),
         }
 
         let remaining = milestone
@@ -7614,9 +7615,10 @@ impl MilestoneEscrow {
             MilestoneStatus::Pending
             | MilestoneStatus::Delivered
             | MilestoneStatus::PartiallyReleased => {}
-            MilestoneStatus::Released | MilestoneStatus::Refunded | MilestoneStatus::Disputed => {
-                return Err(Error::InvalidStatus)
-            }
+            MilestoneStatus::Released
+            | MilestoneStatus::Refunded
+            | MilestoneStatus::Split
+            | MilestoneStatus::Disputed => return Err(Error::InvalidStatus),
         }
 
         let token_client = token::Client::new(&env, &meta.token);
