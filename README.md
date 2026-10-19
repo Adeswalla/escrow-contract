@@ -30,17 +30,32 @@ Disputed → Released (arbiter favors freelancer)
 
 ## Prerequisites
 
-- https://rustup.rs/  1.79+
-- https://developers.stellar.org/docs/smart-contracts/getting-started/setup
-- wasm32 target: rustup target add wasm32-unknown-unknown
+- https://rustup.rs/ (the toolchain is pinned to 1.96.0 by `rust-toolchain.toml`)
+- https://developers.stellar.org/docs/smart-contracts/getting-started/setup (stellar-cli 28.0.0)
+- wasm32 target: `rustup target add wasm32v1-none`
+- Docker, for reproducible builds
 
 ## Build
 
-From the repository root:
+For development, from the repository root:
 
 ```bash
-cargo build --release --target wasm32-unknown-unknown -p milestone-escrow
+stellar contract build --manifest-path contracts/milestone-escrow/Cargo.toml
 ```
+
+Anything that will be deployed must come from the reproducible build instead:
+
+```bash
+scripts/build-reproducible.sh
+```
+
+It compiles a clean export of `HEAD` (or of the commit given as the first
+argument) inside a pinned container (`build/reproducible.Dockerfile`: Rust
+1.96.0 by image digest, stellar-cli 28.0.0 by release checksum, linux/amd64)
+and writes `dist/milestone_escrow.wasm`, its SHA-256 and `dist/build-info.json`.
+The same commit gives the same hash on any machine. CI runs the same script on
+every commit and publishes the hash in the job summary and the wasm as an
+artifact.
 
 ## Test
 
@@ -62,11 +77,44 @@ cargo test -p milestone-escrow
 ## Deploy (Testnet)
 
 ```bash
-soroban contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/milestone_escrow.wasm \
+scripts/build-reproducible.sh
+stellar contract deploy \
+  --wasm dist/milestone_escrow.wasm \
   --network testnet \
   --source <your-account>
 ```
+
+Then record the contract ID, `source_commit` and `wasm_sha256` from
+`dist/build-info.json` in `deployments/<network>.json`, and the hash in
+`CHANGELOG.md`.
+
+After upgrading an existing deployment to this version, the admin should call
+`migrate_cold_config` once to move the whitelist, multisig, yield and fee
+configuration out of instance storage (issue #772). The contract keeps working
+before that call; the migration only makes every later call cheaper.
+
+## Verifying the deployed contract
+
+Anyone can check which source a deployed contract was built from:
+
+1. Read the installed wasm hash:
+
+   ```bash
+   stellar contract fetch --id <contract-id> --network testnet --out-file deployed.wasm
+   sha256sum deployed.wasm
+   ```
+
+   (`stellar contract info` and the explorer show the same hash.)
+2. Look up `source_commit` for that contract in `deployments/<network>.json`.
+3. Rebuild that commit and compare:
+
+   ```bash
+   scripts/build-reproducible.sh <source_commit>
+   cat dist/milestone_escrow.wasm.sha256
+   ```
+
+The two hashes must be identical. If they differ, the deployed code is not the
+reviewed source at that commit.
 
 ## License
 
@@ -77,6 +125,10 @@ MIT
 | Network | Contract ID |
 |---|---|
 | Testnet | `CDD5WKK3WT3QVKXMXTJNDIXE4T73FK6GGXDSD6UTJAH6YYZU52SQ4MUH` |
+
+Deployment records, including the installed wasm hash, are in
+[`deployments/`](deployments/). The current testnet deployment predates
+reproducible builds, so its source commit is unknown.
 
 Explorer: `https://stellar.expert/explorer/testnet/contract/CDD5WKK3WT3QVKXMXTJNDIXE4T73FK6GGXDSD6UTJAH6YYZU52SQ4MUH`
 

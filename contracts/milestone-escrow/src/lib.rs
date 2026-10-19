@@ -9,7 +9,7 @@
 #![allow(clippy::redundant_closure_call)]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, BytesN,
-    ContractExecutable, Env, Symbol, Vec,
+    ContractExecutable, Env, IntoVal, Symbol, TryFromVal, Val, Vec,
 };
 
 /// Maximum number of ratio slots that may be passed to `multisig_transfer_admin`.
@@ -1407,6 +1407,55 @@ impl MilestoneEscrow {
         Ok(())
     }
 
+    /// Read a **cold configuration** entry (issue #772).
+    ///
+    /// The whole contract-instance entry is loaded on every invocation, so it
+    /// keeps only what nearly every call needs (`Job`, pause and cancel flags,
+    /// admin). Rarely used configuration — `WhitelistedTokens`,
+    /// `MultiSigConfig`, `InterestYieldState` and `PlatformFeeAllocation` —
+    /// lives under persistent keys and is read only by the functions that use
+    /// it; `approve_milestone` no longer pays to load a 50-token whitelist or a
+    /// 32-signer multisig set.
+    ///
+    /// A deployment upgraded from the old layout still holds these values in
+    /// instance storage until the admin calls `migrate_cold_config`, so an
+    /// absent persistent entry falls back to the instance copy. The instance
+    /// entry is loaded by every call anyway, so the fallback costs no extra
+    /// ledger entry, and the persistent copy always wins once written.
+    ///
+    /// **This function must contain only read operations.**
+    fn cold_get<V: TryFromVal<Env, Val>>(env: &Env, key: &DataKey) -> Option<V> {
+        env.storage()
+            .persistent()
+            .get(key)
+            .or_else(|| env.storage().instance().get(key))
+    }
+
+    /// Presence check matching [`Self::cold_get`].
+    fn cold_has(env: &Env, key: &DataKey) -> bool {
+        env.storage().persistent().has(key) || env.storage().instance().has(key)
+    }
+
+    /// Move one cold-configuration entry from instance to persistent storage.
+    /// A persistent copy written after the upgrade is newer, so it is kept and
+    /// only the stale instance copy is dropped. Returns whether anything was
+    /// found in instance storage.
+    fn migrate_cold_entry<V>(env: &Env, key: &DataKey) -> bool
+    where
+        V: TryFromVal<Env, Val> + IntoVal<Env, Val>,
+    {
+        let instance = env.storage().instance();
+        let Some(value) = instance.get::<_, V>(key) else {
+            return false;
+        };
+        let persistent = env.storage().persistent();
+        if !persistent.has(key) {
+            persistent.set(key, &value);
+        }
+        instance.remove(key);
+        true
+    }
+
     /// Validation hook: verify that **both** the client and the freelancer
     /// recorded on the job have signed the current transaction.
     ///
@@ -1670,13 +1719,10 @@ impl MilestoneEscrow {
     /// comparing whole-ledger snapshots (`Env::to_ledger_snapshot`) taken
     /// around the public read paths that call this helper.
     fn load_interest_yield_state(env: &Env) -> Result<EscrowInterestYieldState, Error> {
-        env.storage()
-            .instance()
-            .get(&DataKey::InterestYieldState)
-            .ok_or(Error::NotInitialized)
+        Self::cold_get(env, &DataKey::InterestYieldState).ok_or(Error::NotInitialized)
     }
 
-    /// Read `DataKey::PlatformFeeAllocation` from instance storage.
+    /// Read `DataKey::PlatformFeeAllocation` (persistent, see `cold_get`).
     ///
     /// This is the single source of truth for the platform-fee allocation read
     /// path.  Every function that needs the stored value — including the public
@@ -1684,10 +1730,7 @@ impl MilestoneEscrow {
     /// write-path helpers — delegates here so the storage key is referenced in
     /// exactly one place and each invocation issues exactly one ledger read.
     fn load_platform_fee_allocation(env: &Env) -> Result<PlatformFeeAllocation, Error> {
-        env.storage()
-            .instance()
-            .get(&DataKey::PlatformFeeAllocation)
-            .ok_or(Error::NotInitialized)
+        Self::cold_get(env, &DataKey::PlatformFeeAllocation).ok_or(Error::NotInitialized)
     }
 
     /// Read the multisig deadlock flag. `MultisigLocked` is only written by
@@ -1706,7 +1749,7 @@ impl MilestoneEscrow {
 
     fn store_interest_yield_state(env: &Env, state: &EscrowInterestYieldState) {
         env.storage()
-            .instance()
+            .persistent()
             .set(&DataKey::InterestYieldState, state);
     }
 
@@ -1856,7 +1899,7 @@ impl MilestoneEscrow {
     /// * present, `locked == true`  – the illegal source state, `EscrowLocked`.
     fn ensure_interest_yield_writable(env: &Env) -> Result<(), Error> {
         let state: Option<EscrowInterestYieldState> =
-            env.storage().instance().get(&DataKey::InterestYieldState);
+            Self::cold_get(env, &DataKey::InterestYieldState);
         if state.is_some_and(|state| state.locked) {
             return Err(Error::EscrowLocked);
         }
@@ -2267,6 +2310,26 @@ impl MilestoneEscrow {
         Ok(())
     }
 
+    /// Validate the target of an admin transfer (issue #771).
+    ///
+    /// On top of the zero sentinels, `validate_address` rejects the escrow's
+    /// own address: the contract cannot sign an external transaction, so
+    /// making it its own admin would leave every admin endpoint permanently
+    /// unusable. Re-proposing the current admin is also refused — it is a
+    /// no-op that would still cost a full multisig round and emit misleading
+    /// transfer events.
+    fn validate_new_admin(
+        env: &Env,
+        stored_admin: &Address,
+        new_admin: &Address,
+    ) -> Result<(), Error> {
+        Self::validate_address(env, new_admin)?;
+        if new_admin == stored_admin {
+            return Err(Error::InvalidAddress);
+        }
+        Ok(())
+    }
+
     fn assemble_job(env: &Env, meta: &JobMeta) -> Result<Job, Error> {
         let mut milestones = Vec::new(env);
         for i in 0..meta.milestone_count {
@@ -2333,9 +2396,9 @@ impl MilestoneEscrow {
     /// * `DataKey::Version` (instance storage) – version marker `1u32`.
     /// * `DataKey::Ep` (instance storage) – emergency-pause flag set to
     ///   `false`.
-    /// * `DataKey::PlatformFeeAllocation` (instance storage) – fee allocation
+    /// * `DataKey::PlatformFeeAllocation` (persistent storage) – fee allocation
     ///   defaulting to 100 % freelancer / 0 % client / 0 % treasury.
-    /// * `DataKey::WhitelistedTokens` (instance storage) – whitelist
+    /// * `DataKey::WhitelistedTokens` (persistent storage) – whitelist
     ///   initialized with `token` as its sole entry.
     ///
     /// An `"init"` event carrying an [`InitializedEvent`] is published after
@@ -2437,7 +2500,7 @@ impl MilestoneEscrow {
 
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Ep, &false);
-        env.storage().instance().set(
+        env.storage().persistent().set(
             &DataKey::PlatformFeeAllocation,
             &PlatformFeeAllocation {
                 client_bps: 0,
@@ -2450,7 +2513,7 @@ impl MilestoneEscrow {
         let mut whitelist: Vec<Address> = Vec::new(&env);
         whitelist.push_back(token.clone());
         env.storage()
-            .instance()
+            .persistent()
             .set(&DataKey::WhitelistedTokens, &whitelist);
         if auto_release_seconds == 0 {
             return Err(Error::InvalidAmount);
@@ -2478,7 +2541,7 @@ impl MilestoneEscrow {
         let mut whitelist: Vec<Address> = Vec::new(&env);
         whitelist.push_back(token.clone());
         env.storage()
-            .instance()
+            .persistent()
             .set(&DataKey::WhitelistedTokens, &whitelist);
 
         let meta = JobMeta {
@@ -2527,7 +2590,8 @@ impl MilestoneEscrow {
     /// 1. `current_admin.require_auth()` — SDK-level signature check.
     /// 2. Contract must be initialised (`NotInitialized`).
     /// 3. `require_admin` — verified admin key matches `DataKey::Admin`.
-    /// 4. `new_admin` must not be a zero address (`InvalidAddress`).
+    /// 4. `new_admin` must not be a zero address, the contract itself, or the
+    ///    current admin (`InvalidAddress`).
     /// 5. No multisig admin-transfer proposal may already be pending
     ///    (`AdminTransferPending`).
     ///
@@ -2539,7 +2603,8 @@ impl MilestoneEscrow {
     /// # Errors
     /// * `NotInitialized`       – Contract has not been initialized.
     /// * `Unauthorized`         – `current_admin` is not the stored admin.
-    /// * `InvalidAddress`       – `new_admin` is a zero address.
+    /// * `InvalidAddress`       – `new_admin` is a zero address, the contract
+    ///                            itself, or the current admin.
     /// * `AdminTransferPending` – A multisig admin-transfer proposal is already
     ///                            pending; execute or cancel it first.
     pub fn transfer_admin(
@@ -2562,17 +2627,7 @@ impl MilestoneEscrow {
             return Err(Error::Unauthorized);
         }
 
-        let zero_account = Address::from_str(
-            &env,
-            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-        );
-        let zero_contract = Address::from_str(
-            &env,
-            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
-        );
-        if new_admin == zero_account || new_admin == zero_contract {
-            return Err(Error::InvalidAddress);
-        }
+        Self::validate_new_admin(&env, &stored_admin, &new_admin)?;
 
         if env
             .storage()
@@ -2694,11 +2749,8 @@ impl MilestoneEscrow {
             return Err(Error::AlreadyFunded);
         }
 
-        let mut whitelist: Vec<Address> = env
-            .storage()
-            .instance()
-            .get(&DataKey::WhitelistedTokens)
-            .ok_or(Error::NotInitialized)?;
+        let mut whitelist: Vec<Address> =
+            Self::cold_get(&env, &DataKey::WhitelistedTokens).ok_or(Error::NotInitialized)?;
 
         // Duplicate check runs before the capacity check so that a
         // full whitelist still reports TokenAlreadyWhitelisted (rather
@@ -2713,7 +2765,7 @@ impl MilestoneEscrow {
 
         whitelist.push_back(token.clone());
         env.storage()
-            .instance()
+            .persistent()
             .set(&DataKey::WhitelistedTokens, &whitelist);
 
         env.events().publish(
@@ -2766,11 +2818,8 @@ impl MilestoneEscrow {
             return Err(Error::InvalidAddress);
         }
 
-        let mut whitelist: Vec<Address> = env
-            .storage()
-            .instance()
-            .get(&DataKey::WhitelistedTokens)
-            .ok_or(Error::NotInitialized)?;
+        let mut whitelist: Vec<Address> =
+            Self::cold_get(&env, &DataKey::WhitelistedTokens).ok_or(Error::NotInitialized)?;
 
         let whitelist_len = whitelist.len();
         if whitelist_len == 0 {
@@ -2794,7 +2843,7 @@ impl MilestoneEscrow {
             }
             whitelist.pop_back();
             env.storage()
-                .instance()
+                .persistent()
                 .set(&DataKey::WhitelistedTokens, &whitelist);
 
             env.events().publish(
@@ -2837,7 +2886,7 @@ impl MilestoneEscrow {
 
     /// Read-only accessor for `DataKey::WhitelistedTokens`.
     fn read_whitelist(env: &Env) -> Option<Vec<Address>> {
-        env.storage().instance().get(&DataKey::WhitelistedTokens)
+        Self::cold_get(env, &DataKey::WhitelistedTokens)
     }
 
     /// Deposit the full escrow amount into the contract.
@@ -4485,6 +4534,63 @@ impl MilestoneEscrow {
         Ok(())
     }
 
+    /// Migrate a deployment upgraded from the old storage layout (issue #772).
+    ///
+    /// Moves `WhitelistedTokens`, `MultiSigConfig`, `InterestYieldState` and
+    /// `PlatformFeeAllocation` out of the contract-instance entry, which every
+    /// invocation loads, into persistent keys read only by the functions that
+    /// use them. A multisig regime still stored under the pre-#456
+    /// `MultiSigSigners` / `MultiSigThreshold` keys is folded into a persistent
+    /// `MultiSigConfig` on the way.
+    ///
+    /// Call it once, right after `upgrade` to this version. Until then the
+    /// contract keeps working, because every cold-config read falls back to the
+    /// instance copy; the migration only shrinks the instance entry. It is
+    /// idempotent: a second call finds nothing to move.
+    ///
+    /// Returns the number of instance entries that were moved or folded.
+    ///
+    /// # Errors
+    /// * `NotInitialized` – Admin key has never been stored.
+    /// * `Unauthorized`   – `admin` is not the stored admin.
+    pub fn migrate_cold_config(env: Env, admin: Address) -> Result<u32, Error> {
+        Self::require_admin(&env, &admin)?;
+
+        let mut moved = 0u32;
+        if Self::migrate_cold_entry::<Vec<Address>>(&env, &DataKey::WhitelistedTokens) {
+            moved += 1;
+        }
+        if Self::migrate_cold_entry::<MultiSigConfig>(&env, &DataKey::MultiSigConfig) {
+            moved += 1;
+        }
+        if Self::migrate_cold_entry::<EscrowInterestYieldState>(&env, &DataKey::InterestYieldState)
+        {
+            moved += 1;
+        }
+        if Self::migrate_cold_entry::<PlatformFeeAllocation>(&env, &DataKey::PlatformFeeAllocation)
+        {
+            moved += 1;
+        }
+
+        let instance = env.storage().instance();
+        let legacy_signers: Option<Vec<Address>> = instance.get(&DataKey::MultiSigSigners);
+        let legacy_threshold: Option<u32> = instance.get(&DataKey::MultiSigThreshold);
+        if let (Some(signers), Some(threshold)) = (legacy_signers, legacy_threshold) {
+            let persistent = env.storage().persistent();
+            if !persistent.has(&DataKey::MultiSigConfig) {
+                persistent.set(
+                    &DataKey::MultiSigConfig,
+                    &MultiSigConfig(signers, threshold),
+                );
+            }
+            instance.remove(&DataKey::MultiSigSigners);
+            instance.remove(&DataKey::MultiSigThreshold);
+            moved += 1;
+        }
+
+        Ok(moved)
+    }
+
     /// Freeze the escrow: set `DataKey::Ep`, blocking every
     /// endpoint guarded by `ensure_not_paused`.
     ///
@@ -4788,7 +4894,7 @@ impl MilestoneEscrow {
                 return Err(Error::InvalidStatus);
             }
 
-            env.storage().instance().set(
+            env.storage().persistent().set(
                 &DataKey::PlatformFeeAllocation,
                 &PlatformFeeAllocation {
                     client_bps,
@@ -4874,7 +4980,7 @@ impl MilestoneEscrow {
 
             current.locked = true;
             env.storage()
-                .instance()
+                .persistent()
                 .set(&DataKey::PlatformFeeAllocation, &current);
             Ok(())
         })();
@@ -4916,7 +5022,7 @@ impl MilestoneEscrow {
         Self::assert_emergency_pause_not_locked(&env)?;
         Self::validate_fee_allocation(client_bps, freelancer_bps, treasury_bps)?;
 
-        env.storage().instance().set(
+        env.storage().persistent().set(
             &DataKey::PlatformFeeAllocation,
             &PlatformFeeAllocation {
                 client_bps,
@@ -4943,7 +5049,7 @@ impl MilestoneEscrow {
         Ok(())
     }
 
-    /// Return the current platform-fee allocation stored in instance storage.
+    /// Return the current platform-fee allocation (persistent storage).
     ///
     /// This is a **pure read** — it never writes to any storage tier, emits no
     /// events, and performs no authentication checks.  Any caller may invoke it
@@ -4973,7 +5079,7 @@ impl MilestoneEscrow {
     /// # Errors
     ///
     /// Returns [`Error::NotInitialized`] (code 2) when
-    /// `DataKey::PlatformFeeAllocation` is absent from instance storage, which
+    /// `DataKey::PlatformFeeAllocation` is absent from storage, which
     /// is the case only for contracts on which `initialize` has not yet been
     /// successfully invoked.
     ///
@@ -5656,7 +5762,7 @@ impl MilestoneEscrow {
     //
     // This implementation uses three optimisations to minimise bytes stored:
     //
-    // 1. **Signer set and threshold are stored once** (instance storage) in a
+    // 1. **Signer set and threshold are stored once** (persistent storage) in a
     //    single consolidated `MultiSigConfig` entry — rather than one key per
     //    signer, and rather than the two separate `MultiSigSigners` /
     //    `MultiSigThreshold` keys used before issue #456.
@@ -5719,16 +5825,18 @@ impl MilestoneEscrow {
     /// A contract initialised before that change and then upgraded still holds
     /// the two halves under the legacy `MultiSigSigners` / `MultiSigThreshold`
     /// keys, so those are read as a fallback; without it such a contract would
-    /// report `NotInitialized` for an existing multisig regime.  Both layouts
-    /// live in the same contract-instance entry, so the fallback adds no
-    /// ledger entry to the footprint.
+    /// report `NotInitialized` for an existing multisig regime.  The legacy
+    /// keys live in the contract-instance entry, which every call loads
+    /// anyway, so the fallback adds no ledger entry to the footprint.
+    /// `migrate_cold_config` folds them into the persistent
+    /// `MultiSigConfig` (issue #772).
     ///
     /// **This function must contain only read operations.**
     fn load_multisig_config(env: &Env) -> Option<MultiSigConfig> {
-        let instance = env.storage().instance();
-        if let Some(config) = instance.get(&DataKey::MultiSigConfig) {
+        if let Some(config) = Self::cold_get(env, &DataKey::MultiSigConfig) {
             return Some(config);
         }
+        let instance = env.storage().instance();
         let signers: Vec<Address> = instance.get(&DataKey::MultiSigSigners)?;
         let threshold: u32 = instance.get(&DataKey::MultiSigThreshold)?;
         Some(MultiSigConfig(signers, threshold))
@@ -5776,8 +5884,9 @@ impl MilestoneEscrow {
         // Either layout means the regime already exists: a contract upgraded
         // from before issue #456 still holds its signer set under the legacy
         // `MultiSigSigners` key, and must not be re-initialisable.
-        let instance = env.storage().instance();
-        if instance.has(&DataKey::MultiSigConfig) || instance.has(&DataKey::MultiSigSigners) {
+        if Self::cold_has(&env, &DataKey::MultiSigConfig)
+            || env.storage().instance().has(&DataKey::MultiSigSigners)
+        {
             return Err(Error::AlreadyInitialized);
         }
 
@@ -5785,7 +5894,7 @@ impl MilestoneEscrow {
 
         let config = MultiSigConfig(signers, threshold);
         env.storage()
-            .instance()
+            .persistent()
             .set(&DataKey::MultiSigConfig, &config);
 
         // Structured event for indexers / auditors (issue #455).  The two
@@ -5798,11 +5907,9 @@ impl MilestoneEscrow {
         // `MultiSigDuplicateSigner`) returns before this point, so a
         // successful call carries exactly one `msiginit` event and a rejected
         // call carries none.
-        let MultiSigConfig(stored_signers, stored_threshold) = env
-            .storage()
-            .instance()
-            .get(&DataKey::MultiSigConfig)
-            .expect("MultiSigConfig was written above");
+        let MultiSigConfig(stored_signers, stored_threshold) =
+            Self::cold_get(&env, &DataKey::MultiSigConfig)
+                .expect("MultiSigConfig was written above");
 
         env.events().publish(
             (symbol_short!("msiginit"),),
@@ -5837,7 +5944,7 @@ impl MilestoneEscrow {
     ///
     /// # Storage footprint (issue #457)
     /// Keys this call reads:
-    /// * `DataKey::MultiSigConfig` (instance) — the registered signers
+    /// * `DataKey::MultiSigConfig` (persistent, issue #772) — the registered signers
     ///   (which also provide the membership check and the signer's bit index)
     ///   and the approval threshold, in one consolidated entry (issue #456).
     ///   It lives inside the contract's single
@@ -5868,7 +5975,7 @@ impl MilestoneEscrow {
     /// instance entry — job metadata included — on every approval.  There is no
     /// separate per-proposal metadata key to merge with the bitmap.  The
     /// metadata consolidation that does exist — the former `MultiSigSigners` +
-    /// `MultiSigThreshold` pair into the single `MultiSigConfig` instance entry
+    /// `MultiSigThreshold` pair into the single `MultiSigConfig` entry
     /// — is issue #456's and is not duplicated here.
     ///
     /// # Errors
@@ -5983,7 +6090,7 @@ impl MilestoneEscrow {
     /// Query whether a proposal has reached the required approval threshold.
     ///
     /// # Returns
-    /// A `MultiSigApprovalState` built from the instance `MultiSigConfig`
+    /// A `MultiSigApprovalState` built from the persistent `MultiSigConfig`
     /// (its threshold field) and the temporary `MultiSigApproval(proposal_id)`
     /// bitmap.  An unknown or expired proposal reads as an empty bitmap
     /// (`approvals == 0`).
@@ -6048,7 +6155,8 @@ impl MilestoneEscrow {
     /// # Errors
     /// * `NotInitialized`       – Contract not initialised.
     /// * `Unauthorized`         – Caller is not the stored admin.
-    /// * `InvalidAddress`       – `new_admin` is a zero address.
+    /// * `InvalidAddress`       – `new_admin` is a zero address, the contract
+    ///   itself, or the current admin.
     /// * `AdminTransferPending` – A proposal is already pending; execute or
     ///   cancel it before proposing another.
     pub fn propose_admin_transfer(
@@ -6074,17 +6182,7 @@ impl MilestoneEscrow {
             return Err(Error::Unauthorized);
         }
 
-        let zero_account = Address::from_str(
-            &env,
-            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
-        );
-        let zero_contract = Address::from_str(
-            &env,
-            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
-        );
-        if new_admin == zero_account || new_admin == zero_contract {
-            return Err(Error::InvalidAddress);
-        }
+        Self::validate_new_admin(&env, &stored_admin, &new_admin)?;
 
         if env
             .storage()
@@ -6143,9 +6241,11 @@ impl MilestoneEscrow {
             return Err(Error::MultiSigThresholdNotMet);
         }
 
-        // A proposal that keeps the current admin does not need to rewrite the
-        // Admin ledger entry. This preserves the event and clears the pending
-        // proposal while avoiding a redundant storage write.
+        // `propose_admin_transfer` now refuses the current admin (issue #771),
+        // but a same-admin proposal recorded before that check shipped may
+        // still be pending after an upgrade. Such a proposal does not need to
+        // rewrite the Admin ledger entry; it still emits the event and clears
+        // the pending proposal.
         if old_admin != pending.new_admin {
             env.storage()
                 .persistent()
@@ -6410,6 +6510,12 @@ impl MilestoneEscrow {
     /// default on first write). Rejects invalid share totals and modifications
     /// while an execution lock is held.
     ///
+    /// This is the admin-only path, so it is only open **before the escrow is
+    /// funded** (issue #776). Once the client has deposited, the split is part
+    /// of the parties' economics and can only change through
+    /// `set_interest_yield_consent`, which requires the client and freelancer
+    /// to sign as well.
+    ///
     /// ## Guard order
     ///
     /// Every guard runs before this function reads the payload ledger entry or
@@ -6420,8 +6526,10 @@ impl MilestoneEscrow {
     ///    signature is rejected by the host before the contract body executes)
     ///    and then compares against the stored admin.  Being first, an
     ///    unauthorized caller learns nothing about the configuration.
-    /// 2. **Illegal source state** — `ensure_interest_yield_writable` rejects a
-    ///    locked configuration with `EscrowLocked`.  This runs *before* the
+    /// 2. **Illegal source state** — a funded escrow is refused with
+    ///    `AlreadyFunded` (the admin may not move yield between the parties
+    ///    after they committed funds), then `ensure_interest_yield_writable`
+    ///    rejects a locked configuration with `EscrowLocked`.  This runs *before* the
     ///    argument validation below so the state guard is authoritative: a
     ///    caller that is refused because the configuration is frozen for
     ///    execution always gets `EscrowLocked`, never `InvalidRatio`, and so
@@ -6437,20 +6545,19 @@ impl MilestoneEscrow {
     ///
     /// ## Storage-footprint note
     ///
-    /// This function uses `require_admin_from_instance` rather than the
-    /// standard `require_admin` helper so that the admin verification read
-    /// (`DataKey::Admin`, instance) and all `InterestYieldState` reads/writes
-    /// (`DataKey::InterestYieldState`, instance) touch the **same single
-    /// ledger entry** (instance storage) instead of two (persistent + instance).
-    /// The precondition guard also issues exactly one read of
-    /// `InterestYieldState`, so an update costs two reads total rather than
-    /// three.
+    /// The admin check and the funded check both read the contract-instance
+    /// entry (`require_admin_from_instance`, `DataKey::Job`), so together they
+    /// add a single ledger entry. `InterestYieldState` is cold configuration in
+    /// persistent storage (issue #772); the precondition guard issues exactly
+    /// one read of it before the single write.
     ///
     /// # Errors
     /// Listed in evaluation order; a call that violates more than one guard
     /// fails with the first match.
     /// * `NotInitialized` – Contract admin key is missing.
     /// * `Unauthorized`   – Caller is not the stored admin.
+    /// * `AlreadyFunded`  – The escrow has been funded; use
+    ///   `set_interest_yield_consent` instead.
     /// * `EscrowLocked`   – Configuration is locked for execution.
     /// * `InvalidRatio`   – Shares do not sum to exactly 10_000 bps.
     pub fn set_escrow_interest_yield(
@@ -6461,10 +6568,20 @@ impl MilestoneEscrow {
     ) -> Result<(), Error> {
         // Authorization: `admin.require_auth()` inside the helper makes the
         // host reject a missing signature before this body runs at all; the
-        // equality check then rejects a validly-signed non-admin. Both the
-        // Admin read and all InterestYieldState reads/writes are in instance
-        // storage, so the whole function touches a single ledger entry.
+        // equality check then rejects a validly-signed non-admin.
         Self::require_admin_from_instance(&env, &admin)?;
+
+        // Illegal source state: after funding the split is the parties'
+        // economics, so the admin alone may no longer change it (issue #776).
+        // `Job` lives in instance storage, the same entry as the admin read.
+        let funded = env
+            .storage()
+            .instance()
+            .get::<_, JobMeta>(&DataKey::Job)
+            .is_some_and(|meta| meta.funded);
+        if funded {
+            return Err(Error::AlreadyFunded);
+        }
 
         // Illegal source state: a locked configuration may not be replaced
         // until an admin clears the lock. Checked before the pure argument
@@ -6502,10 +6619,9 @@ impl MilestoneEscrow {
     /// the client and the freelancer must independently authorize the
     /// transaction, in addition to the admin.
     ///
-    /// `set_escrow_interest_yield` lets the platform admin unilaterally
-    /// reallocate yield between the two parties. This endpoint exists for
-    /// deployments that want to remove that single point of trust for
-    /// share changes: a compromised or malicious admin key alone cannot move
+    /// `set_escrow_interest_yield` lets the platform admin set the split alone,
+    /// but only before funding. After funding this is the only way to change
+    /// it, so the parties' economics cannot be rewritten without them: a compromised or malicious admin key alone cannot move
     /// funds between client and freelancer here, because `client.require_auth()`
     /// and `freelancer.require_auth()` must both succeed. If either party's
     /// signature is missing from the transaction, the host-level auth check
@@ -6567,8 +6683,8 @@ impl MilestoneEscrow {
     /// Lock interest/yield share state during pending execution.
     ///
     /// Once locked, `set_escrow_interest_yield`, `set_interest_yield_consent`,
-    /// and `interest_yield_split_refund` are all rejected until an admin calls
-    /// `unlock_escrow_interest_yield`.
+    /// and `interest_yield_split_refund` are all rejected until the admin, the
+    /// client and the freelancer jointly call `unlock_escrow_interest_yield`.
     ///
     /// A `yldlock` / `EscrowInterestYieldLockedEvent` is published once the new
     /// state is durable so indexers and auditors get an immutable record of the
@@ -6608,9 +6724,10 @@ impl MilestoneEscrow {
     ///
     /// Like `set_escrow_interest_yield`, this function uses
     /// `require_admin_from_instance` rather than the standard `require_admin`
-    /// helper, so the admin verification read (`DataKey::Admin`, instance) and
-    /// the `InterestYieldState` read/write (instance) touch the **same single**
-    /// ledger entry instead of two (persistent + instance).
+    /// helper, so the admin verification read lands on the contract-instance
+    /// entry every call loads anyway rather than adding the persistent `Admin`
+    /// entry; the `InterestYieldState` read/write is on its own persistent key
+    /// (issue #772).
     ///
     /// # Errors
     /// Listed in evaluation order; a call that violates more than one guard
@@ -6653,12 +6770,19 @@ impl MilestoneEscrow {
 
     /// Clear the execution lock so share configuration can be modified again.
     ///
+    /// Unlocking requires the same consent as changing the shares through
+    /// `set_interest_yield_consent`: the admin **and** both the client and the
+    /// freelancer must sign (issue #776). Otherwise the admin could undo its own
+    /// lock at will and the lock would commit to nothing.
+    ///
     /// # Errors
-    /// * `NotInitialized` - Contract admin key or interest/yield state missing.
+    /// * `NotInitialized` - Contract admin key, job metadata or interest/yield
+    ///   state missing.
     /// * `Unauthorized` - Caller is not the stored admin.
     /// * `InvalidStatus` - Interest/yield lock is not active (already unlocked).
     pub fn unlock_escrow_interest_yield(env: Env, admin: Address) -> Result<(), Error> {
         Self::require_admin(&env, &admin)?;
+        Self::require_client_and_freelancer_consent(&env)?;
         let mut state = Self::load_interest_yield_state(&env)?;
         if !state.locked {
             return Err(Error::InvalidStatus);
@@ -6721,7 +6845,7 @@ impl MilestoneEscrow {
         }
 
         // Precondition: reject illegal source state if interest yield state is locked.
-        if env.storage().instance().has(&DataKey::InterestYieldState) {
+        if Self::cold_has(&env, &DataKey::InterestYieldState) {
             Self::ensure_interest_yield_unlocked(&env)?;
         }
 
@@ -6868,6 +6992,8 @@ mod cancel_admin_transfer_tests;
 #[cfg(test)]
 mod cancel_escrow_split_refund_guards_tests;
 #[cfg(test)]
+mod cold_config_storage_tests;
+#[cfg(test)]
 mod emergency_pause_allocation_guards_tests;
 #[cfg(test)]
 mod get_escrow_interest_yield_no_mutation_tests;
@@ -6881,6 +7007,8 @@ mod get_pending_admin_transfer_tests;
 mod get_platform_fee_allocation_not_initialized_tests;
 #[cfg(test)]
 mod get_yield_info_no_mutation_tests;
+#[cfg(test)]
+mod interest_yield_admin_after_funding_tests;
 #[cfg(test)]
 mod interest_yield_consent_tests;
 #[cfg(test)]
