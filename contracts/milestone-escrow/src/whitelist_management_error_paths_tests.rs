@@ -25,16 +25,22 @@ fn test_env() -> Env {
     })
 }
 
+// The whitelist is cold configuration kept in persistent storage (#789);
+// the contract still falls back to a legacy instance copy, so clear both.
 fn set_whitelist(env: &Env, contract_id: &Address, whitelist: &Vec<Address>) {
     env.as_contract(contract_id, || {
         env.storage()
-            .instance()
+            .persistent()
             .set(&DataKey::WhitelistedTokens, whitelist);
+        env.storage().instance().remove(&DataKey::WhitelistedTokens);
     });
 }
 
 fn remove_whitelist_entry(env: &Env, contract_id: &Address) {
     env.as_contract(contract_id, || {
+        env.storage()
+            .persistent()
+            .remove(&DataKey::WhitelistedTokens);
         env.storage().instance().remove(&DataKey::WhitelistedTokens);
     });
 }
