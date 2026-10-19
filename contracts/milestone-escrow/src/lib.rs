@@ -39,25 +39,45 @@ pub const DISPUTE_TIMEOUT_SECONDS: u64 = 30 * 24 * 60 * 60;
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Error {
+    /// `initialize` was called more than once.
     AlreadyInitialized = 1,
+    /// A call required the contract to be initialized but it was not.
     NotInitialized = 2,
+    /// `fund_escrow` was called after the escrow was already funded.
     AlreadyFunded = 3,
+    /// An operation that requires the escrow to be funded was attempted while it was not.
     NotFunded = 4,
+    /// Caller is not authorized to perform this action.
     Unauthorized = 5,
+    /// Milestone index is out of bounds or refers to an invalid milestone.
     InvalidMilestone = 6,
+    /// Operation is not allowed for the current milestone status.
     InvalidStatus = 7,
+    /// The provided token address is not whitelisted by the admin.
     TokenNotWhitelisted = 8,
+    /// Attempted to whitelist a token that is already whitelisted.
     TokenAlreadyWhitelisted = 9,
+    /// Amount is zero, negative, or otherwise invalid for this operation.
     InvalidAmount = 10,
+    /// Required deadline/timeout has not yet passed.
     DeadlineNotPassed = 11,
+    /// Provided address is invalid.
     InvalidAddress = 12,
+    /// Contract is paused and this operation is not allowed while paused.
     Paused = 13,
+    /// Ratio sum is incorrect (must sum to BPS_SCALE) or values are out of range.
     InvalidRatio = 14,
+    /// Milestone time extension is invalid (e.g. non-positive).
     InvalidExtension = 15,
+    /// Escrow is locked (e.g. dispute/cancel lock or interest-yield lock) and operation is blocked.
     EscrowLocked = 16,
+    /// Multisig setup requires at least one signer.
     MultiSigNoSigners = 17,
+    /// Multisig setup exceeds the maximum allowed number of signers.
     MultiSigTooManySigners = 18,
+    /// Multisig threshold is invalid (must be > 0 and <= number of signers).
     MultiSigInvalidThreshold = 19,
+    /// Multisig setup contains duplicate signers.
     MultiSigDuplicateSigner = 20,
     /// A new `propose_admin_transfer` was attempted while one was already
     /// pending execution or cancellation.
