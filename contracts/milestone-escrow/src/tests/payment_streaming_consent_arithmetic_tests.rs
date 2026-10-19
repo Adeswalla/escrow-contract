@@ -58,8 +58,7 @@ fn initialised_escrow(env: &Env) -> Consent<'_> {
         &arbiter_addr,
         &token,
         &604_800u64,
-        &vec![env, 1_000_i128],
-    );
+        &vec![env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![env, 1_000_i128]));
 
     Consent {
         contract_id,

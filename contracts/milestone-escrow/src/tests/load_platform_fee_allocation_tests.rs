@@ -79,8 +79,7 @@ fn test_load_helper_returns_default_after_initialize() {
         &arbiter_addr,
         &token_id,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     let alloc = client.get_platform_fee_allocation();
     assert_eq!(alloc.client_bps, 0);

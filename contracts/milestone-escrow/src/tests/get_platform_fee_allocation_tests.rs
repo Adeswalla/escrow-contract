@@ -99,8 +99,7 @@ fn test_returns_default_allocation_after_contract_init_only() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     // initialize sets a default allocation; the call must succeed with the default values.
     let allocation = client.get_platform_fee_allocation();

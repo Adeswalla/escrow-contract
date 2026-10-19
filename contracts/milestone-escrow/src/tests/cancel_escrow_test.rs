@@ -153,8 +153,7 @@ fn test_cancel_escrow_not_funded() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &milestone_amounts,
-    );
+        &milestone_amounts, &crate::test_spec_hashes(&env, &milestone_amounts));
 
     // Escrow not funded. Call cancel_escrow by client (should fail).
     let res = client.try_cancel_escrow(&client_addr);

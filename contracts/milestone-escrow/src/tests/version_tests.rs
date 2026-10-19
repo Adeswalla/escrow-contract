@@ -48,8 +48,7 @@ fn initialized_escrow(env: &Env) -> (Address, MilestoneEscrowClient<'_>) {
         &arbiter_addr,
         &token_contract_id,
         &604_800u64,
-        &vec![env, 1_000_i128],
-    );
+        &vec![env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![env, 1_000_i128]));
 
     (contract_id, escrow)
 }

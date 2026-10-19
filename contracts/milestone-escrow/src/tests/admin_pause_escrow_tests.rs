@@ -50,8 +50,7 @@ fn initialised_escrow(env: &Env) -> (MilestoneEscrowClient<'_>, Address) {
         &arbiter_addr,
         &token_contract_id,
         &604_800u64,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     (escrow, admin_addr)
 }

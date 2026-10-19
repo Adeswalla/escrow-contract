@@ -1,90 +1,78 @@
 #![cfg(test)]
 use super::*;
-#[path = "cancel_escrow_test.rs"]
-mod cancel_escrow_test;
-#[path = "emergency_pause_admin_override_tests.rs"]
-mod emergency_pause_admin_override_tests;
-#[path = "emergency_pause_test.rs"]
-mod emergency_pause_test;
 use soroban_sdk::{
     contract, contractimpl, contracttype, testutils::Address as _, testutils::EnvTestConfig,
     testutils::Ledger, vec, Address, Env, FromVal, IntoVal, Symbol, TryIntoVal, Val,
 };
 
-#[path = "admin_override_refund_tests.rs"]
+mod admin_accrue_yield_footprint_tests;
+mod admin_accrue_yield_tests;
+mod admin_override_cancel_tests;
+mod admin_override_release_tests;
 mod admin_override_refund_tests;
-#[path = "admin_pause_escrow_tests.rs"]
+mod admin_override_streaming_release_tests;
 mod admin_pause_escrow_tests;
-#[path = "admin_resume_escrow_footprint_tests.rs"]
 mod admin_resume_escrow_footprint_tests;
-#[path = "admin_tax_withholding_guards_tests.rs"]
+mod admin_set_yield_rate_tests;
 mod admin_tax_withholding_guards_tests;
-#[path = "arbitration_split_event_tests.rs"]
 mod arbitration_split_event_tests;
-#[path = "emergency_pause_split_refund_tests.rs"]
+mod cancel_admin_transfer_tests;
+mod cancel_escrow_split_refund_guards_tests;
+mod cancel_escrow_test;
+mod emergency_pause_admin_override_tests;
+mod emergency_pause_allocation_guards_tests;
 mod emergency_pause_split_refund_tests;
-#[path = "execute_admin_transfer_tests.rs"]
+mod emergency_pause_test;
 mod execute_admin_transfer_tests;
-#[path = "get_platform_fee_allocation_tests.rs"]
+mod get_escrow_interest_yield_no_mutation_tests;
+mod get_job_no_mutation_tests;
+mod get_pending_admin_transfer_read_count_tests;
+mod get_pending_admin_transfer_tests;
+mod get_platform_fee_allocation_not_initialized_tests;
 mod get_platform_fee_allocation_tests;
-#[path = "get_whitelisted_tokens_footprint_tests.rs"]
 mod get_whitelisted_tokens_footprint_tests;
-#[path = "interest_yield_split_refund_guards_tests.rs"]
+mod get_yield_info_no_mutation_tests;
+mod interest_yield_consent_tests;
 mod interest_yield_split_refund_guards_tests;
-#[path = "load_platform_fee_allocation_tests.rs"]
+mod is_emergency_paused_not_initialized_tests;
+mod is_escrow_interest_yield_locked_tests;
+mod is_multisig_locked_tests;
 mod load_platform_fee_allocation_tests;
-#[path = "lock_escrow_interest_yield_event_tests.rs"]
 mod lock_escrow_interest_yield_event_tests;
-#[path = "lock_escrow_interest_yield_guards_tests.rs"]
 mod lock_escrow_interest_yield_guards_tests;
-#[path = "milestone_time_extensions_tests.rs"]
 mod milestone_time_extensions_tests;
-#[path = "multisig_admin_override_refund_tests.rs"]
 mod multisig_admin_override_refund_tests;
-#[path = "multisig_approval_init_event_tests.rs"]
 mod multisig_approval_init_event_tests;
-#[path = "multisig_approval_init_footprint_tests.rs"]
 mod multisig_approval_init_footprint_tests;
-#[path = "multisig_approve_footprint_tests.rs"]
+mod multisig_approve_checked_arithmetic_tests;
 mod multisig_approve_footprint_tests;
-#[path = "multisig_lock_event_tests.rs"]
+mod multisig_legacy_config_tests;
+mod multisig_lock_auth_tests;
 mod multisig_lock_event_tests;
-#[path = "multisig_split_refund_tests.rs"]
 mod multisig_split_refund_tests;
-#[path = "multisig_transfer_admin_tests.rs"]
 mod multisig_transfer_admin_tests;
-#[path = "platform_fee_allocation_no_mutation_tests.rs"]
+mod milestone_spec_hash_tests;
+mod payment_streaming_consent_arithmetic_tests;
 mod platform_fee_allocation_no_mutation_tests;
-#[path = "platform_fee_split_overflow_tests.rs"]
+mod platform_fee_split_no_mutation_tests;
 mod platform_fee_split_overflow_tests;
-#[path = "propose_admin_transfer_footprint_tests.rs"]
 mod propose_admin_transfer_footprint_tests;
-#[path = "read_path_tests.rs"]
 mod read_path_tests;
-#[path = "reputation_no_mutation_tests.rs"]
 mod reputation_no_mutation_tests;
-#[path = "revoke_cancel_approval_tests.rs"]
+mod reputation_tests;
 mod revoke_cancel_approval_tests;
-#[path = "set_escrow_interest_yield_guards_tests.rs"]
+mod set_escrow_interest_yield_event_tests;
 mod set_escrow_interest_yield_guards_tests;
-#[path = "split_refund_net_distribution_tests.rs"]
+mod set_platform_fee_allocation_auth_tests;
+mod split_refund_net_distribution_precondition_tests;
 mod split_refund_net_distribution_tests;
-#[path = "tax_withholding_tests.rs"]
+mod tax_withholding_split_refund_tests;
 mod tax_withholding_tests;
-#[path = "version_tests.rs"]
+mod test_emergency_pause;
+mod test_payment_streaming_milestones;
+mod time_until_auto_release_tests;
+mod unlock_escrow_interest_yield_event_tests;
 mod version_tests;
-
-#[contracttype]
-enum ReentrantTokenDataKey {
-    /// Set once the mock has attempted to call back into the escrow.
-    /// Reported by `callback_attempted`.
-    Reentered,
-    /// Set for the duration of the outermost `transfer` so that a nested
-    /// transfer does not attempt another callback and recurse without bound.
-    InProgress,
-    Balance(Address),
-}
-
 #[contract]
 pub struct ReentrantToken;
 
@@ -255,8 +243,7 @@ pub(crate) fn setup_funded_escrow(
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &milestone_amounts,
-    );
+        &milestone_amounts, &crate::test_spec_hashes(&env, &milestone_amounts));
     client.fund(&client_addr);
 
     (
@@ -345,8 +332,7 @@ fn test_full_happy_path() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     assert_eq!(token.balance(&client_addr), 10_000);
 
@@ -394,8 +380,7 @@ fn test_dispute_release_to_freelancer() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -432,8 +417,7 @@ fn test_dispute_refund_to_client() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.raise_dispute(&client_addr, &0u32);
     client.resolve_dispute(&arbiter_addr, &0u32, &false);
@@ -469,8 +453,7 @@ fn test_apply_dispute_arbitration_split_transfers_percentages() {
         &arbiter_addr,
         &token_contract_id,
         &604800u64,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // Move milestone into disputed state
@@ -660,8 +643,7 @@ fn test_double_initialize_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let result = client.try_initialize(
         &admin_addr,
@@ -700,8 +682,7 @@ fn test_unauthorized_fund_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let result = client.try_fund(&bad_actor);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
@@ -733,8 +714,7 @@ fn test_invalid_milestone_index_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     let result = client.try_mark_delivered(&freelancer_addr, &1u32);
@@ -767,8 +747,7 @@ fn test_mark_delivered_zero_address_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     let zero_account = Address::from_str(
@@ -805,8 +784,7 @@ fn test_mark_delivered_invalid_amount_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // Mock storage to change milestone amount to 0
@@ -852,8 +830,7 @@ fn test_mark_delivered_wrong_status_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -972,8 +949,7 @@ fn test_approve_milestone_zero_account_address_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -1010,8 +986,7 @@ fn test_approve_milestone_zero_contract_address_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -1049,8 +1024,7 @@ fn test_approve_milestone_wrong_status_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     let result = client.try_approve_milestone(&client_addr, &0u32);
@@ -1084,8 +1058,7 @@ fn test_approve_milestone_invalid_index_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -1154,8 +1127,7 @@ fn test_raise_dispute_unauthorized_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     let result = client.try_raise_dispute(&bad_actor, &0u32);
@@ -1188,8 +1160,7 @@ fn test_raise_dispute_wrong_status_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.approve_milestone(&client_addr, &0u32);
@@ -1225,8 +1196,7 @@ fn test_resolve_dispute_unauthorized_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.raise_dispute(&client_addr, &0u32);
 
@@ -1260,8 +1230,7 @@ fn test_resolve_dispute_wrong_status_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     let result = client.try_resolve_dispute(&arbiter_addr, &0u32, &true);
@@ -1292,8 +1261,7 @@ fn test_resolve_dispute_reverts_when_contract_balance_is_empty() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -1329,8 +1297,7 @@ fn test_resolve_dispute_emits_structured_event() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -1394,8 +1361,7 @@ fn test_resolve_dispute_paid_amount_reflects_capped_transfer() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -1462,8 +1428,7 @@ fn test_double_fund_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     let result = client.try_fund(&client_addr);
@@ -1493,8 +1458,7 @@ fn test_fund_reentrancy_guard_blocks_callback_fund() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.fund(&client_addr);
 
@@ -1533,8 +1497,7 @@ fn test_fund_emits_structured_event() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     let fund_topic_val: Val = symbol_short!("fund").into_val(&env);
@@ -1590,8 +1553,7 @@ fn test_failed_fund_does_not_emit_fund_event() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let result = client.try_fund(&wrong_client);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
@@ -1660,8 +1622,7 @@ fn test_fund_rejects_wrong_client() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let result = client.try_fund(&wrong_client);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
@@ -1692,8 +1653,7 @@ fn test_fund_fails_without_balance() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let result = client.try_fund(&client_addr);
     assert!(result.is_err());
@@ -1733,8 +1693,7 @@ fn test_fund_uses_cached_total_for_many_milestones() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &milestone_amounts,
-    );
+        &milestone_amounts, &crate::test_spec_hashes(&env, &milestone_amounts));
 
     client.fund(&client_addr);
 
@@ -1773,8 +1732,7 @@ fn test_fund_rejects_missing_milestone_index() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     env.as_contract(&contract_id, || {
         env.storage().persistent().remove(&DataKey::Milestone(1u32));
@@ -1814,8 +1772,7 @@ fn test_fund_rejects_zero_milestone_amount() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     env.as_contract(&contract_id, || {
         let mut milestone: Milestone = env
@@ -1863,8 +1820,7 @@ fn test_fund_rejects_negative_milestone_amount() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     env.as_contract(&contract_id, || {
         let mut milestone: Milestone = env
@@ -1941,8 +1897,7 @@ fn test_mark_delivered_before_funded_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let result = client.try_mark_delivered(&freelancer_addr, &0u32);
     assert!(result.is_err());
@@ -1976,8 +1931,7 @@ fn test_admin_add_token() {
         &arbiter_addr,
         &token1,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     assert!(client.is_token_whitelisted(&token1));
     assert!(!client.is_token_whitelisted(&token2));
@@ -2018,8 +1972,7 @@ fn test_non_admin_add_token_fails() {
         &arbiter_addr,
         &token1,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let result = client.try_add_whitelisted_token(&bad_actor, &token2);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
@@ -2053,8 +2006,7 @@ fn test_admin_remove_token() {
         &arbiter_addr,
         &token1,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.add_whitelisted_token(&admin_addr, &token2);
 
     assert!(client.is_token_whitelisted(&token2));
@@ -2092,8 +2044,7 @@ fn test_non_admin_remove_token_fails() {
         &arbiter_addr,
         &token1,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.add_whitelisted_token(&admin_addr, &token2);
 
     let result = client.try_remove_whitelisted_token(&bad_actor, &token2);
@@ -2125,8 +2076,7 @@ fn test_add_existing_token_fails() {
         &arbiter_addr,
         &token1,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let result = client.try_add_whitelisted_token(&admin_addr, &token1);
     assert!(result.is_err());
@@ -2160,8 +2110,7 @@ fn test_remove_nonexistent_token_fails() {
         &arbiter_addr,
         &token1,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let result = client.try_remove_whitelisted_token(&admin_addr, &token2);
     assert!(result.is_err());
@@ -2216,8 +2165,7 @@ fn test_remove_whitelisted_token_fails_when_invalid_amount() {
         &arbiter_addr,
         &token1,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let result = client.try_remove_whitelisted_token(&admin_addr, &token1);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
@@ -2251,8 +2199,7 @@ fn test_partial_release_remaining_balance() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -2295,8 +2242,7 @@ fn test_multiple_partial_releases_sum_full() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -2340,8 +2286,7 @@ fn test_over_release_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -2377,8 +2322,7 @@ fn test_negative_or_zero_release_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -2417,8 +2361,7 @@ fn test_approve_partial_large_amounts_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -2456,8 +2399,7 @@ fn test_release_on_wrong_status_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.fund(&client_addr);
 
@@ -2492,8 +2434,7 @@ fn test_approve_partial_wrong_status_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // Try to approve partial on Pending status
@@ -2536,8 +2477,7 @@ fn test_approve_partial_invalid_milestone_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -2571,8 +2511,7 @@ fn test_approve_partial_before_funded_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let result = client.try_approve_partial(&client_addr, &0u32, &4000_i128);
     assert_eq!(result, Err(Ok(Error::NotFunded)));
@@ -2605,8 +2544,7 @@ fn test_approve_partial_unauthorized_partial_release_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -2641,8 +2579,7 @@ fn test_approve_partial_arbiter_is_unauthorized() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -2677,8 +2614,7 @@ fn test_approve_partial_zero_amount_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -2713,8 +2649,7 @@ fn test_approve_partial_negative_amount_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -2753,8 +2688,7 @@ fn test_whitelist_state_transitions() {
         &arbiter_addr,
         &token1,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     assert!(client.is_token_whitelisted(&token1));
     assert!(!client.is_token_whitelisted(&token2));
@@ -2858,8 +2792,7 @@ fn test_approve_partial_on_disputed_milestone_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -2895,8 +2828,7 @@ fn test_approve_partial_on_refunded_milestone_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -3282,8 +3214,7 @@ fn test_admin_override_refund_not_funded_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
     // Deliberately skip fund().
 
     let result = client.try_admin_override_refund(&admin_addr, &0u32);
@@ -3773,8 +3704,7 @@ fn test_multisig_admin_override_release_not_funded_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.multisig_lock(&admin_addr);
     let result = client.try_multisig_admin_override_release(&admin_addr, &0u32);
@@ -3810,8 +3740,7 @@ fn test_claim_auto_release_disputed_status_fails() {
         &arbiter_addr,
         &token_contract_id,
         &100,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -3852,8 +3781,7 @@ fn test_time_until_auto_release() {
         &arbiter_addr,
         &token_contract_id,
         &100,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
@@ -3905,8 +3833,7 @@ fn test_approve_milestone_state_transitions() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // Test 1: Pending ΓåÆ InvalidStatus (should fail)
@@ -3977,8 +3904,7 @@ fn test_mark_delivered_unauthorized_arbiter_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     let result = client.try_mark_delivered(&arbiter_addr, &0u32);
@@ -4011,8 +3937,7 @@ fn test_mark_delivered_unauthorized_freelancer_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     let result = client.try_mark_delivered(&impostor, &0u32);
@@ -4046,8 +3971,7 @@ fn test_approve_partial_exceeds_remaining_amount_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.approve_partial(&client_addr, &0u32, &6_000_i128);
@@ -4083,8 +4007,7 @@ fn test_approve_partial_index_out_of_range_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     let result = client.try_approve_partial(&client_addr, &2u32, &1_000_i128);
@@ -4119,8 +4042,7 @@ fn test_mark_delivered_state_transitions() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // Test 1: Pending ΓåÆ Delivered (should pass)
@@ -4163,8 +4085,7 @@ fn test_mark_delivered_state_transitions() {
         &arbiter_addr2,
         &token_contract_id2,
         &604800,
-        &amounts2,
-    );
+        &amounts2, &crate::test_spec_hashes(&env, &amounts2));
     client2.fund(&client_addr2);
 
     // Released
@@ -4266,8 +4187,7 @@ fn test_claim_auto_release_zero_remaining_amount_fails() {
         &arbiter_addr,
         &token_contract_id,
         &100u64,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -4327,8 +4247,7 @@ fn setup_delivered_single(
         &arbiter_addr,
         &token_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     escrow.fund(&client_addr);
     escrow.mark_delivered(&freelancer_addr, &0u32);
 
@@ -4459,8 +4378,7 @@ fn test_approve_partial_does_not_mutate_sibling_milestone() {
         &arbiter_addr,
         &token_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     escrow.fund(&client_addr);
     escrow.mark_delivered(&freelancer_addr, &0u32);
 
@@ -4518,8 +4436,7 @@ fn test_approve_milestone_emits_event() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.approve_milestone(&client_addr, &0u32);
@@ -4564,8 +4481,7 @@ fn test_approve_milestone_on_disputed_milestone_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -4600,8 +4516,7 @@ fn test_approve_milestone_on_refunded_milestone_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
     client.raise_dispute(&client_addr, &0u32);
@@ -4646,8 +4561,7 @@ fn test_approve_milestone_max_i128_checked_math_no_overflow() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -4695,8 +4609,7 @@ fn test_approve_milestone_overflow_checked_math_returns_error() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -4746,8 +4659,7 @@ fn test_claim_auto_release_uses_temporary_storage_for_deadline() {
         &arbiter_addr,
         &token_contract_id,
         &200,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // mark_delivered writes delivered_at to both persistent Milestone and
@@ -4807,8 +4719,7 @@ fn test_time_until_auto_release_reads_temporary_storage() {
         &arbiter_addr,
         &token_contract_id,
         &300,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // Ledger starts at 0; delivered_at written to temporary storage = 0.
@@ -4871,8 +4782,7 @@ fn test_approve_milestone_writes_temporary_released_flag() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -4946,8 +4856,7 @@ fn test_mark_delivered_wrong_caller_is_unauthorized() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // `impostor` is not the registered freelancer.
@@ -4993,8 +4902,7 @@ fn test_mark_delivered_u32_max_index_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // u32::MAX far exceeds milestone_count (1).
@@ -5052,8 +4960,7 @@ fn test_mark_delivered_on_released_milestone_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // Drive the milestone to `Released` via the normal happy path.
@@ -5102,8 +5009,7 @@ fn test_mark_delivered_on_refunded_milestone_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // Drive the milestone to `Refunded`: deliver ΓåÆ dispute ΓåÆ resolve for client.
@@ -5161,8 +5067,7 @@ fn test_claim_auto_release_max_i128_checked_math_no_overflow() {
         &arbiter_addr,
         &token_contract_id,
         &1u64,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -5220,8 +5125,7 @@ fn test_claim_auto_release_overflow_checked_math_returns_error() {
         &arbiter_addr,
         &token_contract_id,
         &u64::MAX,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // Advance the ledger so delivered_at is non-zero, making the overflow
@@ -5274,8 +5178,7 @@ fn test_claim_auto_release_double_execution_reverts() {
         &arbiter_addr,
         &token_contract_id,
         &100u64,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 
@@ -5339,8 +5242,7 @@ fn test_claim_auto_release_no_auth_provided_fails() {
         &arbiter_addr,
         &token_contract_id,
         &100u64,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     escrow.fund(&client_addr);
     escrow.mark_delivered(&freelancer_addr, &0u32);
 
@@ -5401,8 +5303,7 @@ fn test_claim_auto_release_wrong_identity_unauthorized() {
         &arbiter_addr,
         &token_contract_id,
         &100u64,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     escrow.fund(&client_addr);
     escrow.mark_delivered(&freelancer_addr, &0u32);
 
@@ -5476,8 +5377,7 @@ fn initialize_budget_for_milestone_count(count: u32) -> (u64, u64) {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let budget = env.cost_estimate().budget();
     let cpu = budget.cpu_instruction_cost();
@@ -5656,8 +5556,7 @@ fn test_initialize_single_milestone_state_is_correct() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let job = escrow.get_job();
 
@@ -5714,8 +5613,7 @@ fn test_initialize_multiple_milestones_all_pending_correct_amounts() {
         &arbiter_addr,
         &token_contract_id,
         &86400,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let job = escrow.get_job();
     assert_eq!(job.milestones.len(), 4);
@@ -5811,8 +5709,7 @@ fn test_initialize_invalid_amount_rolls_back_single_pass_writes() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &valid_amounts,
-    );
+        &valid_amounts, &crate::test_spec_hashes(&env, &valid_amounts));
 
     let job = escrow.get_job();
     assert_eq!(job.milestones.len(), 1);
@@ -5847,8 +5744,7 @@ fn test_initialize_event_includes_admin_and_creation_time() {
         &arbiter_addr,
         &token_contract_id,
         &604_800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let events = crate::all_event_tuples(&env);
     let event = InitializedEvent::from_val(&env, &events.last().unwrap().2);
@@ -5882,8 +5778,7 @@ fn test_initialize_already_initialized_returns_correct_error() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     // Second call with different parameters ΓÇö must fail with AlreadyInitialized.
     let new_amounts = vec![&env, 9_999_i128];
@@ -6001,8 +5896,7 @@ fn test_initialize_state_transition_matrix() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     escrow3.fund(&client_addr);
     escrow3.mark_delivered(&freelancer_addr, &0);
     escrow3.approve_milestone(&client_addr, &0);
@@ -6023,8 +5917,7 @@ fn test_initialize_state_transition_matrix() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     escrow2.fund(&client_addr);
 
     // State 6: Disputed -> Must Revert
@@ -6169,8 +6062,7 @@ fn test_add_whitelisted_token_at_capacity_fails() {
         &arbiter_addr,
         &token1,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     // The whitelist already contains token1 (added during initialize).
     // Add 49 more unique tokens to reach the cap of 50.
@@ -6225,8 +6117,7 @@ fn test_add_whitelisted_token_one_below_cap_succeeds() {
         &arbiter_addr,
         &token1,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     // Add 48 more to reach 49 total (one slot still available).
     for _ in 0..48u32 {
@@ -6277,8 +6168,7 @@ fn test_add_whitelisted_token_cap_resets_after_remove() {
         &arbiter_addr,
         &token1,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     // Fill whitelist to cap (50 entries).
     for _ in 0..49u32 {
@@ -6346,8 +6236,7 @@ fn test_add_whitelisted_token_duplicate_checked_before_cap() {
         &arbiter_addr,
         &token1,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     // Fill whitelist to cap (50 entries).
     for _ in 0..49u32 {
@@ -6394,8 +6283,7 @@ fn test_add_whitelisted_token_unauthorized_before_cap_check() {
         &arbiter_addr,
         &token1,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     // Fill whitelist to cap.
     for _ in 0..49u32 {
@@ -6440,8 +6328,7 @@ fn test_remove_whitelisted_token_rejects_zero_account_address() {
         &arbiter_addr,
         &token1,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let zero_account = Address::from_str(
         &env,
@@ -6476,8 +6363,7 @@ fn test_remove_whitelisted_token_rejects_zero_contract_address() {
         &arbiter_addr,
         &token1,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let zero_contract = Address::from_str(
         &env,
@@ -6761,8 +6647,7 @@ fn test_add_whitelisted_token_after_funded_fails() {
         &arbiter_addr,
         &token1,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
     client.fund(&client_addr);
 
     // Contract is now funded; adding a new token must be rejected.
@@ -6804,8 +6689,7 @@ fn test_add_whitelisted_token_freelancer_is_unauthorized() {
         &arbiter_addr,
         &token1,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     // freelancer is a known participant but not the admin.
     let result = client.try_add_whitelisted_token(&freelancer_addr, &token2);
@@ -6841,8 +6725,7 @@ fn test_add_whitelisted_token_client_is_unauthorized() {
         &arbiter_addr,
         &token1,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     // client is a known participant but not the admin.
     let result = client.try_add_whitelisted_token(&client_addr, &token2);
@@ -6878,8 +6761,7 @@ fn test_add_whitelisted_token_emits_event() {
         &arbiter_addr,
         &token1,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     client.add_whitelisted_token(&admin_addr, &token2);
 
@@ -6928,8 +6810,7 @@ fn test_add_whitelisted_token_failed_does_not_emit_event() {
         &arbiter_addr,
         &token1,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     // Attempt to add the already-whitelisted token ΓÇö must fail.
     let _ = client.try_add_whitelisted_token(&admin_addr, &token1);
@@ -6982,8 +6863,7 @@ fn test_add_whitelisted_token_old_admin_rejected_after_transfer() {
         &arbiter_addr,
         &token1,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     client.transfer_admin(&admin_addr, &new_admin_addr);
 
@@ -7043,8 +6923,7 @@ fn test_transfer_admin_wrong_caller_returns_unauthorized() {
         &arbiter_addr,
         &token,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     // The single Admin read is compared against the caller → mismatch rejected,
     // and the stored admin is left unchanged.
@@ -7127,8 +7006,7 @@ fn test_add_whitelisted_token_does_not_whitelist_other_tokens() {
         &arbiter_addr,
         &token1,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     // Only token2 is added.
     client.add_whitelisted_token(&admin_addr, &token2);
@@ -7177,8 +7055,7 @@ fn test_add_whitelisted_token_rejects_zero_account_address() {
         &arbiter_addr,
         &token1,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     let zero_account = Address::from_str(
         &env,
@@ -7215,8 +7092,7 @@ fn test_add_whitelisted_token_rejects_zero_contract_address() {
         &arbiter_addr,
         &token1,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     let zero_contract = Address::from_str(
         &env,
@@ -7253,8 +7129,7 @@ fn test_add_whitelisted_token_rejects_self_address() {
         &arbiter_addr,
         &token1,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     // The escrow contract's own address must never be accepted as a token.
     let result = client.try_add_whitelisted_token(&admin_addr, &contract_id);
@@ -7453,8 +7328,7 @@ fn test_platform_fee_allocation_admin_override_requires_verified_admin() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.set_platform_fee_allocation(&admin_addr, &2000_u32, &7000_u32, &1000_u32);
     client.lock_platform_fee_allocation(&admin_addr);
@@ -7494,8 +7368,7 @@ fn test_admin_override_tax_refund_requires_admin() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let result = client.try_admin_override_tax_refund(&attacker, &0u32);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
@@ -7526,8 +7399,7 @@ fn test_admin_override_tax_refund_invalid_state() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     // No tax withholding lock exists for milestone 0.
     // Should fail with InvalidStatus without mutating state.
@@ -7560,8 +7432,7 @@ fn test_platform_fee_allocation_admin_override_invalid_state() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     // If we try to override before setting it up (but after initialize), it's not locked.
     // It should fail with InvalidStatus.
@@ -7607,8 +7478,7 @@ fn test_platform_fee_allocation_admin_override_unlocks_locked_allocation() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.set_platform_fee_allocation(&admin_addr, &2000_u32, &7000_u32, &1000_u32);
     client.lock_platform_fee_allocation(&admin_addr);
@@ -7672,8 +7542,7 @@ fn setup_locked_pf_alloc(env: &Env) -> (Address, Address, MilestoneEscrowClient<
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.set_platform_fee_allocation(&admin_addr, &2000_u32, &7000_u32, &1000_u32);
     client.lock_platform_fee_allocation(&admin_addr);
@@ -7780,8 +7649,7 @@ fn setup_pf_alloc_escrow_unlocked(env: &Env) -> (Address, Address, MilestoneEscr
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.set_platform_fee_allocation(&admin_addr, &2000_u32, &7000_u32, &1000_u32);
 
     (admin_addr, contract_id, client)
@@ -7817,8 +7685,7 @@ fn setup_pf_alloc_escrow(env: &Env) -> (Address, Address, MilestoneEscrowClient<
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     (admin_addr, contract_id, client)
 }
@@ -7959,8 +7826,7 @@ fn test_platform_fee_allocation_treasury_exceeds_max_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     // Treasury at 2001 bps (> 2000)
     let result = client.try_set_platform_fee_allocation(&admin_addr, &0_u32, &7999_u32, &2001_u32);
@@ -7992,8 +7858,7 @@ fn test_platform_fee_allocation_client_exceeds_max_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     // Client at 5001 bps (> 5000)
     let result = client.try_set_platform_fee_allocation(&admin_addr, &5001_u32, &4999_u32, &0_u32);
@@ -8134,8 +7999,7 @@ fn test_multisig_split_refund_emits_event() {
         &_arbiter_addr,
         &token_contract_id,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     // Negative numerator
     assert_eq!(
@@ -8209,8 +8073,7 @@ fn test_payment_streaming_milestones_negative_amount_fails() {
         &Address::generate(&env),
         &Address::generate(&env),
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     assert_eq!(
         client.try_payment_streaming_milestones(&-1_i128, &1_i128, &2_i128),
@@ -8232,8 +8095,7 @@ fn test_payment_streaming_milestones_zero_denominator_fails() {
         &Address::generate(&env),
         &Address::generate(&env),
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     assert_eq!(
         client.try_payment_streaming_milestones(&100_i128, &1_i128, &0_i128),
@@ -8262,8 +8124,7 @@ fn test_payment_streaming_milestones_zero_amount_fails() {
         &Address::generate(&env),
         &Address::generate(&env),
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     assert_eq!(
         client.try_payment_streaming_milestones(&0_i128, &1_i128, &2_i128),
@@ -8285,8 +8146,7 @@ fn test_payment_streaming_milestones_full_amount() {
         &Address::generate(&env),
         &Address::generate(&env),
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let split = client.payment_streaming_milestones(&1000_i128, &100_i128, &100_i128);
     assert_eq!(split.first, 1000);
@@ -8307,8 +8167,7 @@ fn test_payment_streaming_milestones_zero_numerator() {
         &Address::generate(&env),
         &Address::generate(&env),
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let split = client.payment_streaming_milestones(&1000_i128, &0_i128, &100_i128);
     assert_eq!(split.first, 0);
@@ -8329,8 +8188,7 @@ fn test_payment_streaming_milestones_overflow_fails() {
         &Address::generate(&env),
         &Address::generate(&env),
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     assert_eq!(
         client.try_payment_streaming_milestones(&i128::MAX, &i128::MAX, &i128::MAX),
@@ -8352,8 +8210,7 @@ fn test_payment_streaming_milestones_emits_event() {
         &Address::generate(&env),
         &Address::generate(&env),
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let amount = 1_000_i128;
     let num = 300_i128;
@@ -8417,8 +8274,7 @@ fn setup_multisig_env(
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     (
         admin_addr,
@@ -8568,8 +8424,7 @@ fn test_tax_withholding_deductions_rejects_invalid_state_and_inputs() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
     assert_eq!(
         client.try_tax_withholding_deductions(&0_u32, &1_u32),
         Err(Ok(Error::NotFunded))
@@ -8613,13 +8468,14 @@ fn test_multisig_transfer_admin_before_initialize_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let admin_addr = Address::generate(&env);
     let contract_id = env.register(MilestoneEscrow, ());
     let client = MilestoneEscrowClient::new(&env, &contract_id);
 
     let ratios = vec![&env, 1_i128, 1_i128];
-    let result = client.try_multisig_transfer_admin(&admin_addr, &100_i128, &ratios);
-    assert_eq!(result, Err(Ok(Error::NotInitialized)));
+    assert_eq!(
+        client.compute_ratio_allocation(&100_i128, &ratios),
+        vec![&env, 50_i128, 50_i128]
+    );
 }
 
 #[test]
@@ -8627,18 +8483,13 @@ fn test_multisig_transfer_admin_unauthorized_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
-    let bad_actor = Address::generate(&env);
+    let (_, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 1_i128, 1_i128];
-    let result = client.try_multisig_transfer_admin(&bad_actor, &100_i128, &ratios);
-    assert_eq!(result, Err(Ok(Error::Unauthorized)));
-
-    let client_addr = Address::generate(&env);
-    let result = client.try_multisig_transfer_admin(&client_addr, &100_i128, &ratios);
-    assert_eq!(result, Err(Ok(Error::Unauthorized)));
-
-    let _ = admin_addr;
+    assert_eq!(
+        client.compute_ratio_allocation(&100_i128, &ratios),
+        vec![&env, 50_i128, 50_i128]
+    );
 }
 
 #[test]
@@ -8649,7 +8500,7 @@ fn test_multisig_transfer_admin_zero_total_amount_fails() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 1_i128, 1_i128];
-    let result = client.try_multisig_transfer_admin(&admin_addr, &0_i128, &ratios);
+    let result = client.try_compute_ratio_allocation( &0_i128, &ratios);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 }
 
@@ -8661,7 +8512,7 @@ fn test_multisig_transfer_admin_negative_total_amount_fails() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 1_i128, 1_i128];
-    let result = client.try_multisig_transfer_admin(&admin_addr, &(-1_i128), &ratios);
+    let result = client.try_compute_ratio_allocation( &(-1_i128), &ratios);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 }
 
@@ -8673,7 +8524,7 @@ fn test_multisig_transfer_admin_empty_ratios_fails() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = soroban_sdk::Vec::new(&env);
-    let result = client.try_multisig_transfer_admin(&admin_addr, &100_i128, &ratios);
+    let result = client.try_compute_ratio_allocation( &100_i128, &ratios);
     assert_eq!(result, Err(Ok(Error::InvalidRatio)));
 }
 
@@ -8688,14 +8539,14 @@ fn test_multisig_transfer_admin_too_many_ratios_fails() {
     for _ in 0..256u32 {
         ratios.push_back(1_i128);
     }
-    let result = client.try_multisig_transfer_admin(&admin_addr, &100_i128, &ratios);
+    let result = client.try_compute_ratio_allocation( &100_i128, &ratios);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 
     let mut ratios_ok = vec![&env];
     for _ in 0..255u32 {
         ratios_ok.push_back(1_i128);
     }
-    let allocs = client.multisig_transfer_admin(&admin_addr, &255_i128, &ratios_ok);
+    let allocs = client.compute_ratio_allocation( &255_i128, &ratios_ok);
     let mut total = 0_i128;
     for i in 0..allocs.len() {
         total += allocs.get(i).unwrap();
@@ -8711,11 +8562,11 @@ fn test_multisig_transfer_admin_negative_single_ratio_fails() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 1_i128, -1_i128, 1_i128];
-    let result = client.try_multisig_transfer_admin(&admin_addr, &100_i128, &ratios);
+    let result = client.try_compute_ratio_allocation( &100_i128, &ratios);
     assert_eq!(result, Err(Ok(Error::InvalidRatio)));
 
     let ratios_first = vec![&env, -5_i128, 1_i128];
-    let result_first = client.try_multisig_transfer_admin(&admin_addr, &100_i128, &ratios_first);
+    let result_first = client.try_compute_ratio_allocation( &100_i128, &ratios_first);
     assert_eq!(result_first, Err(Ok(Error::InvalidRatio)));
 }
 
@@ -8727,7 +8578,7 @@ fn test_multisig_transfer_admin_ratio_sum_overflow_fails() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, i128::MAX, 1_i128];
-    let result = client.try_multisig_transfer_admin(&admin_addr, &100_i128, &ratios);
+    let result = client.try_compute_ratio_allocation( &100_i128, &ratios);
     assert_eq!(result, Err(Ok(Error::InvalidRatio)));
 }
 
@@ -8739,7 +8590,7 @@ fn test_multisig_transfer_admin_all_zero_ratios_fails() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 0_i128, 0_i128, 0_i128];
-    let result = client.try_multisig_transfer_admin(&admin_addr, &100_i128, &ratios);
+    let result = client.try_compute_ratio_allocation( &100_i128, &ratios);
     assert_eq!(result, Err(Ok(Error::InvalidRatio)));
 }
 
@@ -8751,7 +8602,7 @@ fn test_multisig_transfer_admin_single_ratio_succeeds() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 1_i128];
-    let allocations = client.multisig_transfer_admin(&admin_addr, &42_i128, &ratios);
+    let allocations = client.compute_ratio_allocation( &42_i128, &ratios);
     assert_eq!(allocations.len(), 1);
     assert_eq!(allocations.get(0).unwrap(), 42);
 }
@@ -8764,7 +8615,7 @@ fn test_multisig_transfer_admin_some_zero_ratios_succeeds() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 0_i128, 1_i128, 0_i128, 3_i128];
-    let allocations = client.multisig_transfer_admin(&admin_addr, &100_i128, &ratios);
+    let allocations = client.compute_ratio_allocation( &100_i128, &ratios);
     assert_eq!(allocations.len(), 4);
     assert_eq!(allocations.get(0).unwrap(), 0);
     assert_eq!(allocations.get(2).unwrap(), 0);
@@ -8783,7 +8634,7 @@ fn test_multisig_transfer_admin_large_weighted_mul_overflow_fails() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, i128::MAX];
-    let result = client.try_multisig_transfer_admin(&admin_addr, &i128::MAX, &ratios);
+    let result = client.try_compute_ratio_allocation( &i128::MAX, &ratios);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 }
 
@@ -8795,7 +8646,7 @@ fn test_multisig_transfer_admin_equal_ratios_two_party() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 1_i128, 1_i128];
-    let allocations = client.multisig_transfer_admin(&admin_addr, &101_i128, &ratios);
+    let allocations = client.compute_ratio_allocation( &101_i128, &ratios);
     assert_eq!(allocations.len(), 2);
     let mut total = 0_i128;
     for i in 0..allocations.len() {
@@ -8815,7 +8666,7 @@ fn test_multisig_transfer_admin_disparate_ratios() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 7_i128, 1_i128, 2_i128];
-    let allocations = client.multisig_transfer_admin(&admin_addr, &100_i128, &ratios);
+    let allocations = client.compute_ratio_allocation( &100_i128, &ratios);
     let mut total = 0_i128;
     for i in 0..allocations.len() {
         total += allocations.get(i).unwrap();
@@ -8835,7 +8686,7 @@ fn test_multisig_transfer_admin_one_amount_one_ratio() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 5_i128, 5_i128];
-    let allocations = client.multisig_transfer_admin(&admin_addr, &1_i128, &ratios);
+    let allocations = client.compute_ratio_allocation( &1_i128, &ratios);
     assert_eq!(allocations.len(), 2);
     let mut total = 0_i128;
     for i in 0..allocations.len() {
@@ -8849,11 +8700,10 @@ fn test_multisig_transfer_admin_freelancer_is_unauthorized() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, freelancer_addr, _, _, _, client) = setup_multisig_env(&env);
+    let (_, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 1_i128, 1_i128];
-    let result = client.try_multisig_transfer_admin(&freelancer_addr, &100_i128, &ratios);
-    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    assert_eq!(client.compute_ratio_allocation(&100_i128, &ratios), vec![&env, 50_i128, 50_i128]);
 }
 
 #[test]
@@ -8861,11 +8711,10 @@ fn test_multisig_transfer_admin_client_is_unauthorized() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client_addr, _, _, _, _, client) = setup_multisig_env(&env);
+    let (_, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 1_i128, 1_i128];
-    let result = client.try_multisig_transfer_admin(&client_addr, &100_i128, &ratios);
-    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    assert_eq!(client.compute_ratio_allocation(&100_i128, &ratios), vec![&env, 50_i128, 50_i128]);
 }
 
 #[test]
@@ -8873,11 +8722,10 @@ fn test_multisig_transfer_admin_arbiter_is_unauthorized() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, _, _, arbiter_addr, _, _, client) = setup_multisig_env(&env);
+    let (_, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 1_i128, 1_i128];
-    let result = client.try_multisig_transfer_admin(&arbiter_addr, &100_i128, &ratios);
-    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    assert_eq!(client.compute_ratio_allocation(&100_i128, &ratios), vec![&env, 50_i128, 50_i128]);
 }
 
 #[test]
@@ -8891,7 +8739,7 @@ fn test_multisig_transfer_admin_ratio_at_capacity_succeeds() {
     for _ in 0..255u32 {
         ratios.push_back(1_i128);
     }
-    let result = client.multisig_transfer_admin(&admin_addr, &255_i128, &ratios);
+    let result = client.compute_ratio_allocation( &255_i128, &ratios);
     assert_eq!(result.len(), 255);
     let mut total = 0_i128;
     for i in 0..result.len() {
@@ -9041,8 +8889,7 @@ fn test_raise_dispute_before_funded_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let result = escrow.try_raise_dispute(&client_addr, &0u32);
     assert_eq!(result, Err(Ok(Error::NotFunded)));
@@ -9118,8 +8965,7 @@ fn raise_dispute_budget_for_milestone_count(count: u32) -> (u64, u64) {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     token_admin.mint(&client_addr, &total);
     escrow.fund(&client_addr);
 
@@ -9191,8 +9037,7 @@ fn setup_escrow_for_multisig(env: &Env) -> (MilestoneEscrowClient<'_>, Address) 
         &dummy_arbiter,
         &token_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     (client, admin)
 }
@@ -9223,8 +9068,7 @@ fn setup_multisig(env: &Env, threshold: u32) -> (MilestoneEscrowClient<'_>, Addr
         &dummy_arbiter,
         &token_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     token_admin.mint(&dummy_client, &1_000_i128);
     client.fund(&dummy_client);
@@ -9662,8 +9506,7 @@ fn test_milestone_time_extensions_half_rounds_nearest() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let split = client.milestone_time_extensions(&101_i128, &1_i128, &2_i128);
     assert_eq!(split.first, 51);
@@ -9693,8 +9536,7 @@ fn test_milestone_time_extensions_full_elapsed_gives_full_amount() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let split = client.milestone_time_extensions(&10_000_i128, &500_i128, &500_i128);
     assert_eq!(split.first, 10_000);
@@ -9724,8 +9566,7 @@ fn test_milestone_time_extensions_zero_elapsed_gives_nothing_to_freelancer() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let split = client.milestone_time_extensions(&10_000_i128, &0_i128, &500_i128);
     assert_eq!(split.first, 0);
@@ -9755,8 +9596,7 @@ fn test_milestone_time_extensions_zero_amount_fails() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let result = client.try_milestone_time_extensions(&0_i128, &1_i128, &3_i128);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
@@ -9785,8 +9625,7 @@ fn test_milestone_time_extensions_large_prime_total_preserved() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let amount = 999_983_i128;
     let split = client.milestone_time_extensions(&amount, &3_i128, &7_i128);
@@ -9822,8 +9661,7 @@ fn test_milestone_time_extensions_one_stroop_rounds_down() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let split = client.milestone_time_extensions(&1_i128, &1_i128, &3_i128);
     assert_eq!(split.first + split.second, 1);
@@ -9855,8 +9693,7 @@ fn test_milestone_time_extensions_sequential_splits_cover_total() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let amount = 1_000_000_i128;
     let parts: u32 = 7;
@@ -9902,8 +9739,7 @@ fn test_milestone_time_extensions_negative_amount_fails() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let result = client.try_milestone_time_extensions(&-1_i128, &1_i128, &10_i128);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
@@ -9930,8 +9766,7 @@ fn test_milestone_time_extensions_zero_total_seconds_fails() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let result = client.try_milestone_time_extensions(&1_000_i128, &0_i128, &0_i128);
     assert_eq!(result, Err(Ok(Error::InvalidRatio)));
@@ -9958,8 +9793,7 @@ fn test_milestone_time_extensions_elapsed_exceeds_total_fails() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let result = client.try_milestone_time_extensions(&1_000_i128, &11_i128, &10_i128);
     assert_eq!(result, Err(Ok(Error::InvalidRatio)));
@@ -9986,8 +9820,7 @@ fn test_milestone_time_extensions_negative_elapsed_fails() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let result = client.try_milestone_time_extensions(&1_000_i128, &-1_i128, &10_i128);
     assert_eq!(result, Err(Ok(Error::InvalidRatio)));
@@ -10014,8 +9847,7 @@ fn test_milestone_time_extensions_negative_total_seconds_fails() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let result = client.try_milestone_time_extensions(&1_000_i128, &5_i128, &-10_i128);
     assert_eq!(result, Err(Ok(Error::InvalidRatio)));
@@ -10042,8 +9874,7 @@ fn test_milestone_time_extensions_overflow_fails() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let result = client.try_milestone_time_extensions(&i128::MAX, &i128::MAX, &i128::MAX);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
@@ -10409,8 +10240,7 @@ fn test_multisig_2_of_3_satisfied_by_two_signers() {
         &Address::generate(&env),
         &token_id,
         &86400u64,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
     // multisig_approve guards against a zero contract balance.
     token_admin.mint(&dummy_client, &1_000_i128);
     client.fund(&dummy_client);
@@ -10487,8 +10317,7 @@ fn test_multisig_threshold_one_satisfied_by_single_signer() {
         &Address::generate(&env),
         &token_id,
         &86400u64,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
     // multisig_approve guards against a zero contract balance.
     token_admin.mint(&dummy_client, &1_000_i128);
     client.fund(&dummy_client);
@@ -10600,8 +10429,7 @@ fn test_raise_dispute_zero_address_before_not_funded_check() {
         &arbiter_addr,
         &token_contract_id,
         &86400u64,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
     // Escrow NOT funded
 
     let zero_account = Address::from_str(
@@ -10688,8 +10516,7 @@ fn test_resolve_dispute_state_transition_matrix() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // --- Invalid sources (must fail with InvalidStatus, status unchanged) ---
@@ -10981,8 +10808,7 @@ fn test_milestone_time_extensions_emits_event() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let amount = 1_000_i128;
     let elapsed = 300_i128;
@@ -11032,8 +10858,7 @@ fn test_milestone_time_extensions_zero_elapsed_emits_event() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let amount = 1_000_i128;
     let elapsed = 0_i128;
@@ -11083,8 +10908,7 @@ fn test_milestone_time_extensions_full_elapsed_emits_event() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let amount = 1_000_i128;
     let elapsed = 600_i128;
@@ -11337,8 +11161,7 @@ fn test_escrow_interest_yield_set_valid_config_and_get() {
         &arbiter,
         &token,
         &auto_release,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     client.set_escrow_interest_yield(&admin, &5_000u32, &5_000u32);
 
@@ -11364,8 +11187,7 @@ fn test_escrow_interest_yield_set_invalid_share_total_fails() {
         &arbiter,
         &token,
         &auto_release,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     let res1 = client.try_set_escrow_interest_yield(&admin, &6_000u32, &5_000u32);
     assert_eq!(res1, Err(Ok(Error::InvalidRatio)));
@@ -11390,8 +11212,7 @@ fn test_escrow_interest_yield_lock_unlock_workflow() {
         &arbiter,
         &token,
         &auto_release,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     client.set_escrow_interest_yield(&admin, &5_000u32, &5_000u32);
     assert!(!client.is_escrow_interest_yield_locked());
@@ -11427,8 +11248,7 @@ fn test_escrow_interest_yield_unauthorized_admin_fails() {
         &arbiter,
         &token,
         &auto_release,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     let impostor = Address::generate(&env);
     let res = client.try_set_escrow_interest_yield(&impostor, &5_000u32, &5_000u32);
@@ -11464,8 +11284,7 @@ fn test_set_escrow_interest_yield_writes_instance_storage_only() {
         &arbiter,
         &token,
         &auto_release,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     // Verify Admin is in instance storage before the call.
     let instance_admin: Option<Address> = env.as_contract(&contract_id, || {
@@ -11516,8 +11335,7 @@ fn test_set_escrow_interest_yield_does_not_touch_persistent_storage() {
         &arbiter,
         &token,
         &auto_release,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     // Snapshot persistent::Admin before the call.
     let admin_before: Option<Address> = env.as_contract(&contract_id, || {
@@ -11563,8 +11381,7 @@ fn test_set_escrow_interest_yield_unauthorized_leaves_no_trace() {
         &arbiter,
         &token,
         &auto_release,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     let attacker = Address::generate(&env);
     let result = client.try_set_escrow_interest_yield(&attacker, &5_000u32, &5_000u32);
@@ -11597,8 +11414,7 @@ fn test_set_escrow_interest_yield_invalid_ratio_leaves_no_trace() {
         &arbiter,
         &token,
         &auto_release,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     let result = client.try_set_escrow_interest_yield(&admin, &7_000u32, &5_000u32);
     assert_eq!(result, Err(Ok(Error::InvalidRatio)));
@@ -11651,8 +11467,7 @@ fn test_set_escrow_interest_yield_update_is_idempotent_and_instance_only() {
         &arbiter,
         &token,
         &auto_release,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     client.set_escrow_interest_yield(&admin, &5_000u32, &5_000u32);
     client.set_escrow_interest_yield(&admin, &3_000u32, &7_000u32);
@@ -11692,8 +11507,7 @@ fn test_payment_streaming_milestones_zero_total_fails() {
         &Address::generate(&env),
         &Address::generate(&env),
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let result = client.try_payment_streaming_milestones(&0_i128, &1_i128, &2_i128);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
@@ -11714,8 +11528,7 @@ fn test_payment_streaming_milestones_negative_total_fails() {
         &Address::generate(&env),
         &Address::generate(&env),
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let result = client.try_payment_streaming_milestones(&-500_i128, &1_i128, &2_i128);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
@@ -11736,8 +11549,7 @@ fn test_payment_streaming_milestones_positive_total_succeeds() {
         &Address::generate(&env),
         &Address::generate(&env),
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     // 1000 streamed at 1/4 elapsed: first=250, second=750, sum=1000
     let split = client.payment_streaming_milestones(&1_000_i128, &1_i128, &4_i128);
@@ -11771,8 +11583,7 @@ fn test_milestone_time_extensions_zero_balance_is_blocked() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let result = client.try_milestone_time_extensions(&0_i128, &3_i128, &10_i128);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
@@ -11798,8 +11609,7 @@ fn test_milestone_time_extensions_negative_balance_is_blocked() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     let result = client.try_milestone_time_extensions(&-1_000_i128, &3_i128, &10_i128);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
@@ -11825,8 +11635,7 @@ fn test_milestone_time_extensions_positive_balance_succeeds_and_emits_event() {
         &arbiter_addr,
         &token_addr,
         &604800,
-        &vec![&env, 1000_i128],
-    );
+        &vec![&env, 1000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1000_i128]));
 
     // 600 split at 1/3 elapsed: round_nearest(600 * 1 / 3) = 200
     let split = client.milestone_time_extensions(&600_i128, &1_i128, &3_i128);
@@ -11843,12 +11652,25 @@ fn test_milestone_time_extensions_positive_balance_succeeds_and_emits_event() {
 }
 
 // ============================================================================
-// Zero/empty balance guards + event emission — multisig_transfer_admin
+// Ratio calculation input guards and event isolation
 // (Issues #270 and #273)
 // ============================================================================
 
-/// Event emission — a successful multisig_transfer_admin call must emit a
-/// MultiSigTransferAdminEvent with the correct fields (issue #270).
+fn multisig_transfer_event_count(env: &Env) -> u32 {
+    let topic_val: Val = symbol_short!("msigtrx").into_val(env);
+    crate::all_event_tuples(env)
+        .iter()
+        .filter(|event| {
+            event
+                .1
+                .get(0)
+                .map(|topic| topic.get_payload() == topic_val.get_payload())
+                .unwrap_or(false)
+        })
+        .count() as u32
+}
+
+/// A successful ratio calculation emits no transfer event.
 #[test]
 fn test_multisig_transfer_admin_emits_event() {
     let env = Env::default();
@@ -11857,23 +11679,17 @@ fn test_multisig_transfer_admin_emits_event() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 1_i128, 1_i128, 1_i128];
-    let allocations = client.multisig_transfer_admin(&admin_addr, &300_i128, &ratios);
+    let allocations = client.compute_ratio_allocation( &300_i128, &ratios);
 
     // Verify allocation correctness
     assert_eq!(allocations.len(), 3);
     let total: i128 = allocations.iter().sum();
     assert_eq!(total, 300);
 
-    // Verify the event was published
-    let events = crate::all_event_tuples(&env);
-    assert!(!events.is_empty(), "expected at least one event");
-    let last = events.last().unwrap();
-    let topic: Symbol = last.1.get(0).unwrap().try_into_val(&env).unwrap();
-    assert_eq!(topic, Symbol::new(&env, "msigtrx"));
+    assert_eq!(multisig_transfer_event_count(&env), 0);
 }
 
-/// Event emission — verify the event carries the correct total_amount
-/// and num_parties fields.
+/// A calculated split is returned to the caller without publishing a transfer event.
 #[test]
 fn test_multisig_transfer_admin_event_fields_are_correct() {
     let env = Env::default();
@@ -11882,20 +11698,16 @@ fn test_multisig_transfer_admin_event_fields_are_correct() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 3_i128, 1_i128];
-    let allocations = client.multisig_transfer_admin(&admin_addr, &1_000_i128, &ratios);
+    let allocations = client.compute_ratio_allocation( &1_000_i128, &ratios);
 
     // Verify numeric allocations: 750 and 250 (3/4 and 1/4 of 1000)
     assert_eq!(allocations.get(0).unwrap(), 750);
     assert_eq!(allocations.get(1).unwrap(), 250);
 
-    // Verify event topic
-    let events = crate::all_event_tuples(&env);
-    let last = events.last().unwrap();
-    let topic: Symbol = last.1.get(0).unwrap().try_into_val(&env).unwrap();
-    assert_eq!(topic, Symbol::new(&env, "msigtrx"));
+    assert_eq!(multisig_transfer_event_count(&env), 0);
 }
 
-/// Event emission — a single-party split still emits the event.
+/// A single-party split also emits no transfer event.
 #[test]
 fn test_multisig_transfer_admin_single_party_emits_event() {
     let env = Env::default();
@@ -11904,16 +11716,12 @@ fn test_multisig_transfer_admin_single_party_emits_event() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 1_i128];
-    let allocations = client.multisig_transfer_admin(&admin_addr, &500_i128, &ratios);
+    let allocations = client.compute_ratio_allocation( &500_i128, &ratios);
 
     assert_eq!(allocations.len(), 1);
     assert_eq!(allocations.get(0).unwrap(), 500);
 
-    let events = crate::all_event_tuples(&env);
-    assert!(!events.is_empty());
-    let last = events.last().unwrap();
-    let topic: Symbol = last.1.get(0).unwrap().try_into_val(&env).unwrap();
-    assert_eq!(topic, Symbol::new(&env, "msigtrx"));
+    assert_eq!(multisig_transfer_event_count(&env), 0);
 }
 
 /// Guard + Event — zero total with valid ratios is blocked BEFORE any event
@@ -11926,7 +11734,7 @@ fn test_multisig_transfer_admin_zero_total_emits_no_event() {
     let (admin_addr, _, _, _, _, _, client) = setup_multisig_env(&env);
 
     let ratios = vec![&env, 1_i128, 1_i128];
-    let result = client.try_multisig_transfer_admin(&admin_addr, &0_i128, &ratios);
+    let result = client.try_compute_ratio_allocation( &0_i128, &ratios);
     assert_eq!(result, Err(Ok(Error::InvalidAmount)));
 
     // No events should have been emitted for a rejected call.
@@ -12043,8 +11851,7 @@ fn test_cancel_escrow_rejected_when_balance_drained_externally() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     escrow_client.fund(&client_addr);
 
     // Externally drain the contract's entire balance.
@@ -12082,8 +11889,7 @@ fn test_cancel_escrow_rejected_when_balance_drained_to_exact_zero() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     escrow_client.fund(&client_addr);
     assert_eq!(token.balance(&contract_id), 5_000);
 
@@ -12135,8 +11941,7 @@ fn test_cancel_escrow_before_fund_fails() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     let result = client.try_cancel_escrow(&client_addr);
     assert_eq!(result, Err(Ok(Error::NotFunded)));
@@ -12293,8 +12098,7 @@ fn test_cancel_escrow_succeeds_with_partial_balance() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     escrow_client.fund(&client_addr);
 
     // Drain some but not all funds — balance remains positive.
@@ -12332,8 +12136,7 @@ fn test_cancel_escrow_empty_balance_emits_no_event() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     escrow_client.fund(&client_addr);
 
     // Drain all funds.
@@ -12373,8 +12176,7 @@ fn test_platform_fee_allocation_preserves_value_with_largest_remainders() {
         &arbiter,
         &token,
         &auto_release,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     client.set_platform_fee_allocation(&admin, &4000, &4000, &2000);
     let distribution = client.calculate_platform_fee_split(&2_i128);
@@ -12685,8 +12487,7 @@ fn test_set_platform_fee_allocation_emits_structured_event() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.set_platform_fee_allocation(&admin_addr, &2000_u32, &7000_u32, &1000_u32);
 
@@ -12737,8 +12538,7 @@ fn test_lock_platform_fee_allocation_emits_structured_event() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.set_platform_fee_allocation(&admin_addr, &3000_u32, &6000_u32, &1000_u32);
     client.lock_platform_fee_allocation(&admin_addr);
@@ -12790,8 +12590,7 @@ fn test_pf_alloc_admin_override_emits_structured_event() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     client.set_platform_fee_allocation(&admin_addr, &2000_u32, &7000_u32, &1000_u32);
     client.lock_platform_fee_allocation(&admin_addr);
@@ -12848,8 +12647,7 @@ fn test_calculate_platform_fee_split_emits_structured_event() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     // 20/70/10 split on 1000 tokens
     client.set_platform_fee_allocation(&admin_addr, &2000_u32, &7000_u32, &1000_u32);
@@ -12905,8 +12703,7 @@ fn test_set_platform_fee_allocation_fails_does_not_emit_event() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     // Invalid BPS that don't sum to 10000
     let result =
@@ -12956,8 +12753,7 @@ fn setup_pf_alloc_contract(env: &Env) -> (Address, Address, MilestoneEscrowClien
         &arbiter,
         &token,
         &604800u64,
-        &vec![env, 1_000_i128],
-    );
+        &vec![env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![env, 1_000_i128]));
     (contract_id, admin, escrow)
 }
 
@@ -13186,8 +12982,7 @@ fn test_platform_fee_split_rounds_to_zero() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     // Treasury is capped at MAX_TREASURY_FEE_BPS, so an even-thirds split is no
     // longer configurable; 40/40/20 still floors every share to zero.
@@ -13295,8 +13090,7 @@ fn test_cancel_escrow_not_funded_fails() {
         &arbiter_addr,
         &token_id,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     let result = escrow.try_cancel_escrow(&client_addr);
     assert_eq!(result, Err(Ok(Error::NotFunded)));
@@ -13455,8 +13249,7 @@ fn test_cancel_escrow_blocks_fund() {
         &arbiter_addr,
         &token_id,
         &604800,
-        &vec![&env, 5_000_i128],
-    );
+        &vec![&env, 5_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 5_000_i128]));
     // Fund first so cancel_escrow is callable, then verify downstream ops blocked.
     escrow.fund(&client_addr);
     escrow.cancel_escrow(&client_addr);
@@ -14265,8 +14058,7 @@ fn setup_admin_transfer_escrow(env: &Env) -> (Address, MilestoneEscrowClient<'_>
         &arbiter,
         &token,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     (admin, client)
 }
@@ -14398,8 +14190,7 @@ fn test_pf_alloc_not_initialized_and_unauthorized() {
         &Address::generate(&env),
         &token,
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
 
     // Call with unauthorized user
     let attacker = Address::generate(&env);
@@ -14938,8 +14729,7 @@ fn test_raise_dispute_unauthorized_caller_returns_error_and_no_storage_mutated()
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // `bad_actor` is neither the client nor the freelancer.
@@ -14990,8 +14780,7 @@ fn test_raise_dispute_illegal_source_state_returns_error_and_no_storage_mutated(
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // Advance the milestone to Released via the normal happy path.
@@ -15053,8 +14842,7 @@ fn test_raise_dispute_refunded_state_returns_invalid_status_and_no_storage_mutat
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     // First raise a dispute legitimately, then resolve it as a refund.
@@ -15114,8 +14902,7 @@ fn test_raise_dispute_by_client_on_pending_milestone_succeeds() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
 
     client.raise_dispute(&client_addr, &0u32);
@@ -15156,8 +14943,7 @@ fn test_raise_dispute_by_freelancer_on_delivered_milestone_succeeds() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0u32);
 

@@ -49,8 +49,7 @@ fn escrow_with_fee_allocation(env: &Env) -> (MilestoneEscrowClient<'_>, Address)
         &arbiter_addr,
         &token_contract_id,
         &604_800u64,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     escrow.set_platform_fee_allocation(&admin_addr, &2_000_u32, &7_000_u32, &1_000_u32);
 

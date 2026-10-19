@@ -67,8 +67,7 @@ fn setup_initialized_escrow(env: &Env) -> (Address, Address, Address, Address, A
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &vec![env, 1_000_i128],
-    );
+        &vec![env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![env, 1_000_i128]));
 
     (
         client_addr,
@@ -247,8 +246,7 @@ fn test_is_emergency_paused_not_initialized_is_scoped_per_contract_instance() {
         &env.register_stellar_asset_contract_v2(admin_addr.clone())
             .address(),
         &604800,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
     assert_eq!(initialized.try_is_emergency_paused(), Ok(Ok(false)));
 
     let pristine_id = env.register(MilestoneEscrow, ());

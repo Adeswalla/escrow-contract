@@ -11,11 +11,13 @@
 //!    systematically down.
 
 use super::*;
+    let before = env.to_ledger_snapshot();
 use soroban_sdk::{
     testutils::Address as _, testutils::EnvTestConfig, testutils::Ledger as _, token, vec, Address,
     Env, FromVal, IntoVal, Symbol, TryFromVal, Val,
 };
 
+    assert_eq!(env.to_ledger_snapshot(), before);
 // ── fixtures ────────────────────────────────────────────────────────────────
 
 fn test_env() -> Env {
@@ -54,8 +56,7 @@ fn initialised_escrow(env: &Env) -> (MilestoneEscrowClient<'_>, Address, Address
         &arbiter_addr,
         &token_contract_id,
         &604_800u64,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     // Fund the contract so pause-gated refund settlements (which reject an
     // empty balance) can proceed in the tests that exercise the split math.
@@ -447,8 +448,7 @@ fn test_claim_refund_rejects_an_empty_contract_balance() {
         &arbiter_addr,
         &token_contract_id,
         &604_800u64,
-        &vec![&env, 1_000_i128],
-    );
+        &vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![&env, 1_000_i128]));
     escrow.emergency_pause(&client_addr, &freelancer_addr);
 
     assert_eq!(

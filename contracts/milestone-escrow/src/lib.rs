@@ -12,7 +12,7 @@ use soroban_sdk::{
     ContractExecutable, Env, Symbol, Vec,
 };
 
-/// Maximum number of ratio slots that may be passed to `multisig_transfer_admin`.
+/// Maximum number of ratio slots accepted by `compute_ratio_allocation`.
 /// A multisig setup with more than this many signers is operationally
 /// unreasonable and would impose unbounded per-transaction CPU costs; the cap
 /// guarantees that the nested loop over `ratios` iterates at most
@@ -387,6 +387,9 @@ pub enum DataKey {
     /// Appended at the end of `DataKey` so existing variant discriminants stay
     /// stable (serialization compatibility for already-written ledger entries).
     MultiSigConfig,
+    /// Persistent hash of the off-chain description or acceptance criteria
+    /// for a milestone, keyed by its index.
+    MilestoneSpecHash(u32),
 }
 
 #[contracttype]
@@ -399,6 +402,7 @@ pub struct InitializedEvent {
     pub token: Address,
     pub auto_release_seconds: u64,
     pub milestone_amounts: Vec<i128>,
+    pub milestone_spec_hashes: Vec<BytesN<32>>,
     pub total_amount: i128,
     pub milestone_count: u32,
     pub created_at: u64,
@@ -1328,22 +1332,6 @@ pub struct SplitRefundNetDistributionEvent {
     pub client_fee_share: i128,
     pub freelancer_net_payout: i128,
     pub treasury_fee_share: i128,
-}
-
-/// Emitted by `multisig_transfer_admin` after a successful proportional
-/// allocation of `total_amount` across all ratio entries.  Downstream
-/// indexers can use this event to audit every admin-triggered multi-party
-/// transfer without querying contract storage directly.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MultiSigTransferAdminEvent {
-    /// The total amount that was distributed.
-    pub total_amount: i128,
-    /// The number of parties the amount was split between.
-    pub num_parties: u32,
-    /// The resulting allocation per party, in the same order as the input
-    /// ratios.  Guaranteed to sum exactly to `total_amount`.
-    pub allocations: Vec<i128>,
 }
 
 /// Emitted by `upgrade` recording the outcome of a contract WASM upgrade.
@@ -2318,6 +2306,8 @@ impl MilestoneEscrow {
     ///                           milestone.  Must be non-empty; every
     ///                           individual amount must be strictly positive
     ///                           (`> 0`).
+    /// * `milestone_spec_hashes` – Ordered 32-byte hashes of the corresponding
+    ///                            off-chain milestone descriptions.
     ///
     /// # Returns
     /// `Ok(())` on success.  At that point the following state has been
@@ -2328,6 +2318,8 @@ impl MilestoneEscrow {
     /// * `DataKey::Milestone(i)` (persistent storage) – one `Milestone` entry
     ///   per element of `milestone_amounts`, each starting in
     ///   `MilestoneStatus::Pending` with `released_amount = 0`.
+    /// * `DataKey::MilestoneSpecHash(i)` (persistent storage) – corresponding
+    ///   hash from `milestone_spec_hashes`.
     /// * `DataKey::Admin` (instance **and** persistent storage) – the `admin`
     ///   address.
     /// * `DataKey::Version` (instance storage) – version marker `1u32`.
@@ -2339,9 +2331,8 @@ impl MilestoneEscrow {
     ///   initialized with `token` as its sole entry.
     ///
     /// An `"init"` event carrying an [`InitializedEvent`] is published after
-    /// all state is written.  The event includes all party addresses,
-    /// `auto_release_seconds`, the full `milestone_amounts` vec, the computed
-    /// `total_amount`, and `milestone_count`.
+    /// all state is written. It includes the full `milestone_amounts` vec and
+    /// corresponding `milestone_spec_hashes`.
     ///
     /// On any error path the Soroban host rolls back all storage writes made
     /// during this invocation, including the reentrancy sentinel written at
@@ -2370,6 +2361,8 @@ impl MilestoneEscrow {
     ///
     /// * [`Error::InvalidAmount`] – Any of the following conditions:
     ///   - `milestone_amounts` is empty (no milestones to escrow).
+    ///   - `milestone_spec_hashes.len()` differs from
+    ///     `milestone_amounts.len()`.
     ///   - Any individual milestone amount is `≤ 0` (zero or negative amounts
     ///     are not valid escrow values).
     ///   - The sum of all milestone amounts overflows `i128`.
@@ -2392,6 +2385,7 @@ impl MilestoneEscrow {
         token: Address,
         auto_release_seconds: u64,
         milestone_amounts: Vec<i128>,
+        milestone_spec_hashes: Vec<BytesN<32>>,
     ) -> Result<(), Error> {
         admin.require_auth();
 
@@ -2434,6 +2428,9 @@ impl MilestoneEscrow {
         // checked_initialize_total via i128::checked_add (see its rustdoc).
         // Non-positive amounts and sum overflow both return Err(InvalidAmount).
         let total_amount = Self::checked_initialize_total(&milestone_amounts)?;
+        if milestone_spec_hashes.len() != milestone_count {
+            return Err(Error::InvalidAmount);
+        }
 
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Ep, &false);
@@ -2460,6 +2457,9 @@ impl MilestoneEscrow {
             let amount = milestone_amounts
                 .get(index)
                 .ok_or(Error::InvalidMilestone)?;
+            let spec_hash = milestone_spec_hashes
+                .get(index)
+                .ok_or(Error::InvalidMilestone)?;
             Self::store_milestone(
                 &env,
                 index,
@@ -2470,6 +2470,9 @@ impl MilestoneEscrow {
                     delivered_at: 0,
                 },
             );
+            env.storage()
+                .persistent()
+                .set(&DataKey::MilestoneSpecHash(index), &spec_hash);
         }
 
         env.storage().persistent().set(&DataKey::Admin, &admin);
@@ -2508,6 +2511,7 @@ impl MilestoneEscrow {
                 token: meta.token,
                 auto_release_seconds: meta.auto_release_seconds,
                 milestone_amounts,
+                milestone_spec_hashes,
                 total_amount: meta.total_amount,
                 milestone_count: meta.milestone_count,
                 created_at: meta.created_at,
@@ -4530,26 +4534,19 @@ impl MilestoneEscrow {
         }
 
         env.storage().instance().set(&DataKey::EpLk, &true);
-
-        let result = (|| {
-            env.storage().instance().set(&DataKey::Ep, &true);
-            Ok(())
-        })();
-
+        env.storage().instance().set(&DataKey::Ep, &true);
         env.storage().instance().set(&DataKey::EpLk, &false);
 
-        if result.is_ok() {
-            env.events().publish(
-                (symbol_short!("empause"),),
-                EmergencyPausedEvent {
-                    client,
-                    freelancer,
-                    contract_id: env.current_contract_address(),
-                },
-            );
-        }
+        env.events().publish(
+            (symbol_short!("empause"),),
+            EmergencyPausedEvent {
+                client,
+                freelancer,
+                contract_id: env.current_contract_address(),
+            },
+        );
 
-        result
+        Ok(())
     }
 
     /// Lift an emergency freeze, restoring normal operation.
@@ -5471,26 +5468,13 @@ impl MilestoneEscrow {
         result
     }
 
-    /// Split `total_amount` into per-party shares for a multi-party admin
-    /// transfer and return those shares.
+    /// Split `total_amount` into per-party shares without changing contract state.
     ///
-    /// This is a **pure allocation helper**: it authorises `admin`, computes
-    /// the split with the largest-remainder (Hare quota) method, and publishes
-    /// one `msigtrx` event.  It never moves a single token and never writes to
-    /// instance, persistent, or temporary storage, so callers can compute the
-    /// whole distribution before deciding how to execute it — the transfers
-    /// themselves are performed by the caller from the returned vector.
-    ///
-    /// # Authorization
-    /// `admin.require_auth()` runs before anything else, so a transaction
-    /// missing `admin`'s signature is rejected by the host and never enters
-    /// the body.  That host-level auth failure is **not** one of the `Error`
-    /// variants below.  With the signature present, `admin` must still equal
-    /// the stored admin.
+    /// The result uses the largest-remainder (Hare quota) method. This
+    /// calculation performs no authorization, storage writes, token transfers,
+    /// or event publication. Callers must separately execute any transfers.
     ///
     /// # Parameters
-    /// * `admin`        – Caller.  Must be the address written by
-    ///                    `initialize`.
     /// * `total_amount` – Amount to split.  Must be > 0.
     /// * `ratios`       – Per-party weights, index-aligned with the returned
     ///                    vector.  Only their relative sizes matter, so they
@@ -5516,32 +5500,17 @@ impl MilestoneEscrow {
     /// * **Determinism** – remainder ties are broken by lowest index, so
     ///   identical inputs always produce the identical vector.
     ///
-    /// A successful call publishes exactly one `msigtrx` event whose
-    /// `MultiSigTransferAdminEvent` payload carries `total_amount`,
-    /// `num_parties == ratios.len()`, and an `allocations` vector equal to the
-    /// return value.  Every `Err` path below returns before that publish, so a
-    /// rejected call emits no event at all.
-    ///
     /// # Validation order
-    /// Guards run in the order below and a call violating more than one fails
+    /// Checks run in the order below and a call violating more than one fails
     /// with the first match:
     ///
-    /// 1. `admin.require_auth()`             → missing signature: host-level
-    ///    auth failure (not an `Error` variant)
-    /// 2. stored-admin lookup / comparison  → `NotInitialized` /
-    ///    `Unauthorized`
-    /// 3. `total_amount` ≤ 0                → `InvalidAmount`
-    /// 4. `ratios` empty                    → `InvalidRatio`
-    /// 5. `ratios.len()` > 255              → `InvalidAmount`
-    /// 6. negative entry, overflowing sum, or `Σratios` ≤ 0 → `InvalidRatio`
-    /// 7. allocation arithmetic overflow    → `InvalidAmount`
+    /// 1. `total_amount` ≤ 0                → `InvalidAmount`
+    /// 2. `ratios` empty                    → `InvalidRatio`
+    /// 3. `ratios.len()` > 255              → `InvalidAmount`
+    /// 4. negative entry, overflowing sum, or `Σratios` ≤ 0 → `InvalidRatio`
+    /// 5. allocation arithmetic overflow    → `InvalidAmount`
     ///
     /// # Errors
-    /// * `NotInitialized` – The contract has not been initialised: no stored
-    ///   admin exists.  Reachable only after `admin.require_auth()` has
-    ///   succeeded.
-    /// * `Unauthorized`   – `admin` signed but is not the stored admin, e.g. a
-    ///   client, freelancer, arbiter, or arbitrary third-party address.
     /// * `InvalidAmount`  – `total_amount` ≤ 0; `ratios` longer than
     ///   `MAX_MULTISIG_RATIO_COUNT`; or an `i128` checked operation inside the
     ///   allocation maths (weighted product, running base sum, residue
@@ -5549,22 +5518,13 @@ impl MilestoneEscrow {
     /// * `InvalidRatio`   – `ratios` is empty; any entry is negative; `Σratios`
     ///   overflows `i128`; or `Σratios` ≤ 0 (every entry zero).
     ///
-    /// Arithmetic overflow maps to `InvalidAmount` / `InvalidRatio` rather
-    /// than `ArithmeticOverflow`, preserving this endpoint's original error
-    /// codes for existing callers and indexers.
-    pub fn multisig_transfer_admin(
+    /// Arithmetic overflow maps to `InvalidAmount` / `InvalidRatio`.
+    pub fn compute_ratio_allocation(
         env: Env,
-        admin: Address,
         total_amount: i128,
         ratios: Vec<i128>,
     ) -> Result<Vec<i128>, Error> {
-        // Only the stored admin may trigger a multi-party transfer.
-        Self::require_admin(&env, &admin)?;
-
-        // Guard: reject zero or negative totals so that a multisig transfer
-        // cannot be initiated against an empty or invalid balance.  A zero
-        // total would distribute nothing and signals a drained or
-        // misconfigured escrow.
+        // A zero total has no meaningful allocation.
         if total_amount <= 0 {
             return Err(Error::InvalidAmount);
         }
@@ -5629,18 +5589,6 @@ impl MilestoneEscrow {
             );
             remainders.set(best_index, i128::MIN);
         }
-
-        // Emit a structured event so downstream indexers can audit every
-        // multi-party admin transfer without reading contract storage directly.
-        let num_parties = allocations.len();
-        env.events().publish(
-            (symbol_short!("msigtrx"),),
-            MultiSigTransferAdminEvent {
-                total_amount,
-                num_parties,
-                allocations: allocations.clone(),
-            },
-        );
 
         Ok(allocations)
     }
@@ -6031,7 +5979,7 @@ impl MilestoneEscrow {
         })
     }
 
-    // ── multisig_transfer_admin: transaction status lock ───────────────────
+    // ── multisig admin transfer: transaction status lock ──────────────────
     //
     // `propose_admin_transfer` / `execute_admin_transfer` /
     // `cancel_admin_transfer_proposal` build a status lock on top of the
@@ -6311,6 +6259,18 @@ impl MilestoneEscrow {
     pub fn get_job(env: Env) -> Result<Job, Error> {
         let meta = Self::load_job_meta(&env)?;
         Self::assemble_job(&env, &meta)
+    }
+
+    /// Return the off-chain description hash committed for one milestone.
+    pub fn get_milestone_spec_hash(env: Env, index: u32) -> Result<BytesN<32>, Error> {
+        let meta = Self::load_job_meta(&env)?;
+        if index >= meta.milestone_count {
+            return Err(Error::InvalidMilestone);
+        }
+        env.storage()
+            .persistent()
+            .get(&DataKey::MilestoneSpecHash(index))
+            .ok_or(Error::InvalidMilestone)
     }
 
     /// Return the reputation counter for an address.
@@ -6853,69 +6813,18 @@ pub(crate) fn all_event_tuples(
 }
 
 #[cfg(test)]
-mod admin_accrue_yield_footprint_tests;
+pub(crate) fn test_spec_hashes(env: &Env, amounts: &Vec<i128>) -> Vec<BytesN<32>> {
+    let mut hashes = Vec::new(env);
+    for _ in 0..amounts.len() {
+        hashes.push_back(BytesN::from_array(env, &[0; 32]));
+    }
+    hashes
+}
+
 #[cfg(test)]
-mod admin_accrue_yield_tests;
+mod tests;
 #[cfg(test)]
-mod admin_override_cancel_tests;
-#[cfg(test)]
-mod admin_override_streaming_release_tests;
-#[cfg(test)]
-mod admin_set_yield_rate_tests;
-#[cfg(test)]
-mod cancel_admin_transfer_tests;
-#[cfg(test)]
-mod cancel_escrow_split_refund_guards_tests;
-#[cfg(test)]
-mod emergency_pause_allocation_guards_tests;
-#[cfg(test)]
-mod get_escrow_interest_yield_no_mutation_tests;
-#[cfg(test)]
-mod get_job_no_mutation_tests;
-#[cfg(test)]
-mod get_pending_admin_transfer_read_count_tests;
-#[cfg(test)]
-mod get_pending_admin_transfer_tests;
-#[cfg(test)]
-mod get_platform_fee_allocation_not_initialized_tests;
-#[cfg(test)]
-mod get_yield_info_no_mutation_tests;
-#[cfg(test)]
-mod interest_yield_consent_tests;
-#[cfg(test)]
-mod is_emergency_paused_not_initialized_tests;
-#[cfg(test)]
-mod is_escrow_interest_yield_locked_tests;
-#[cfg(test)]
-mod is_multisig_locked_tests;
-#[cfg(test)]
-mod multisig_approve_checked_arithmetic_tests;
-#[cfg(test)]
-mod multisig_legacy_config_tests;
-mod multisig_lock_auth_tests;
-#[cfg(test)]
-mod payment_streaming_consent_arithmetic_tests;
-#[cfg(test)]
-mod platform_fee_split_no_mutation_tests;
-#[cfg(test)]
-mod reputation_tests;
-mod set_escrow_interest_yield_event_tests;
-#[cfg(test)]
-mod set_platform_fee_allocation_auth_tests;
-#[cfg(test)]
-mod split_refund_net_distribution_precondition_tests;
-#[cfg(test)]
-mod tax_withholding_split_refund_tests;
-#[cfg(test)]
-mod test;
-#[cfg(test)]
-mod test_emergency_pause;
-#[cfg(test)]
-mod test_payment_streaming_milestones;
-#[cfg(test)]
-mod time_until_auto_release_tests;
-#[cfg(test)]
-mod unlock_escrow_interest_yield_event_tests;
+pub(crate) use tests as test;
 
 // ── escrow_interest_yield: admin emergency override endpoints ─────────────────
 //

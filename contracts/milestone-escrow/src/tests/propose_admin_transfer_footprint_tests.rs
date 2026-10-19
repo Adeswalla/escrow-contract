@@ -143,8 +143,7 @@ fn test_propose_admin_transfer_happy_path_unaffected() {
         &arbiter,
         &token,
         &604800,
-        &soroban_sdk::vec![&env, 1_000_i128],
-    );
+        &soroban_sdk::vec![&env, 1_000_i128], &crate::test_spec_hashes(&env, &soroban_sdk::vec![&env, 1_000_i128]));
 
     let new_admin = Address::generate(&env);
     let result = client.try_propose_admin_transfer(&admin, &new_admin, &9u32);

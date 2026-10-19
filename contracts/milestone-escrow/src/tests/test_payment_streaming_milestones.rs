@@ -56,8 +56,7 @@ fn calculator_only(env: &Env) -> MilestoneEscrowClient<'_> {
         &arbiter_addr,
         &token_addr,
         &604_800u64,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
     escrow
 }
 
@@ -117,8 +116,7 @@ fn initialised_escrow(env: &Env) -> (MilestoneEscrowClient<'_>, Parties) {
         &arbiter_addr,
         &token_contract_id,
         &604_800u64,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     (
         escrow,
@@ -705,8 +703,7 @@ fn test_payment_streaming_lock_blocks_fund() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     env.as_contract(&contract_id, || {
         env.storage()

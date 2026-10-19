@@ -22,8 +22,7 @@ fn setup(env: &Env) -> (Address, MilestoneEscrowClient<'_>, Address) {
         &arbiter,
         &token,
         &604800u64,
-        &soroban_sdk::vec![env, 1_000_i128],
-    );
+        &soroban_sdk::vec![env, 1_000_i128], &crate::test_spec_hashes(&env, &soroban_sdk::vec![env, 1_000_i128]));
     (contract_id, escrow, admin)
 }
 

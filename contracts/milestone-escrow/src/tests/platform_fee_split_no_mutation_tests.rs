@@ -104,8 +104,7 @@ fn fixture(env: &Env, client_bps: u32, freelancer_bps: u32, treasury_bps: u32) -
         &arbiter_addr,
         &token_id,
         &604_800u64,
-        &milestones,
-    );
+        &milestones, &crate::test_spec_hashes(&env, &milestones));
     escrow.fund(&client_addr);
     escrow.set_platform_fee_allocation(&admin, &client_bps, &freelancer_bps, &treasury_bps);
 

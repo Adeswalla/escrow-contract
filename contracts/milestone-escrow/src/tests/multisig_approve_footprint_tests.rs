@@ -98,8 +98,7 @@ fn multisig_escrow(
         &arbiter_addr,
         &token_id,
         &604_800u64,
-        &vec![env, 1_000_i128],
-    );
+        &vec![env, 1_000_i128], &crate::test_spec_hashes(&env, &vec![env, 1_000_i128]));
     if fund {
         escrow.fund(&client_addr);
     }

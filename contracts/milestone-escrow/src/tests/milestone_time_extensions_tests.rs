@@ -249,8 +249,7 @@ fn test_milestone_time_extensions_lock_blocks_fund() {
         &arbiter_addr,
         &token_contract_id,
         &604800,
-        &amounts,
-    );
+        &amounts, &crate::test_spec_hashes(&env, &amounts));
 
     env.as_contract(&contract_id, || {
         env.storage()

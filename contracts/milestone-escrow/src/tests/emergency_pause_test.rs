@@ -3,7 +3,16 @@ use super::*;
 use crate::{
     DataKey, EmergencyPauseAdminOverrideEvent, EmergencyPausedEvent, EmergencyUnpausedEvent, Error,
 };
-use soroban_sdk::{symbol_short, vec, Env, FromVal, IntoVal, Symbol, TryIntoVal, Val};
+use soroban_sdk::{
+    symbol_short, vec, Env, FromVal, IntoVal, Symbol, TryIntoVal, Val,
+    testutils::EnvTestConfig,
+};
+
+fn env_without_snapshot() -> Env {
+    Env::new_with_config(EnvTestConfig {
+        capture_snapshot_at_drop: false,
+    })
+}
 
 #[test]
 fn test_emergency_pause_happy_path_and_event() {
@@ -220,6 +229,7 @@ fn test_emergency_pause_unauthorized() {
     let milestone_amounts = vec![&env, 1000_i128];
     let (client_addr, freelancer_addr, _, admin_addr, _, _, client) =
         setup_funded_escrow(&env, milestone_amounts);
+    let before = env.to_ledger_snapshot();
 
     // Call pause as admin (should fail, missing signatures from client/freelancer)
     let res = client.try_emergency_pause(&admin_addr, &admin_addr);
@@ -231,6 +241,27 @@ fn test_emergency_pause_unauthorized() {
 
     let res = client.try_emergency_pause(&freelancer_addr, &freelancer_addr);
     assert_eq!(res, Err(Ok(Error::Unauthorized)));
+    assert_eq!(env.to_ledger_snapshot(), before);
+}
+
+#[test]
+fn test_emergency_pause_rejects_a_held_transition_lock_without_mutation() {
+    let env = env_without_snapshot();
+    env.mock_all_auths();
+
+    let amounts = vec![&env, 1_000_i128];
+    let (client_addr, freelancer_addr, _, _, _, contract_id, client) =
+        setup_funded_escrow(&env, amounts);
+    env.as_contract(&contract_id, || {
+        env.storage().instance().set(&DataKey::EpLk, &true);
+    });
+    let before = env.to_ledger_snapshot();
+
+    assert_eq!(
+        client.try_emergency_pause(&client_addr, &freelancer_addr),
+        Err(Ok(Error::EmergencyPauseInProgress))
+    );
+    assert_eq!(env.to_ledger_snapshot(), before);
 }
 
 #[test]
@@ -244,6 +275,27 @@ fn test_emergency_unpause_unauthorized() {
     // Call unpause as client (should fail)
     let res = client.try_emergency_unpause(&client_addr);
     assert_eq!(res, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn test_emergency_unpause_rejects_a_held_transition_lock_without_mutation() {
+    let env = env_without_snapshot();
+    env.mock_all_auths();
+
+    let amounts = vec![&env, 1_000_i128];
+    let (client_addr, freelancer_addr, _, admin_addr, _, contract_id, client) =
+        setup_funded_escrow(&env, amounts);
+    client.emergency_pause(&client_addr, &freelancer_addr);
+    env.as_contract(&contract_id, || {
+        env.storage().instance().set(&DataKey::EpLk, &true);
+    });
+    let before = env.to_ledger_snapshot();
+
+    assert_eq!(
+        client.try_emergency_unpause(&admin_addr),
+        Err(Ok(Error::EmergencyPauseInProgress))
+    );
+    assert_eq!(env.to_ledger_snapshot(), before);
 }
 
 #[test]
