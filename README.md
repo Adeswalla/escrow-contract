@@ -22,6 +22,7 @@ This contract allows a client to fund a job broken into milestones. Funds are lo
 | `escalate_dispute` | Client or Freelancer | After the timeout, restore a disputed milestone to its previous status |
 | `resolve_dispute` | Arbiter | Release to freelancer or refund to client |
 | `get_job` | Anyone | View current job state |
+| `sweep_excess` | Client or admin | Recover surplus tokens not backing obligations |
 
 ## Milestone States
 

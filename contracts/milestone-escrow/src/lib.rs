@@ -156,6 +156,8 @@ pub enum Error {
     InvalidFundingMode = 40,
     /// `request_revision` was called after `MAX_REVISIONS` revisions.
     MaxRevisions = 41,
+    /// `sweep_excess` found no recoverable surplus.
+    NothingToSweep = 42,
 }
 
 const MAX_REVISIONS: u32 = 3;
@@ -462,6 +464,14 @@ pub struct InitializedEvent {
     pub total_amount: i128,
     pub milestone_count: u32,
     pub created_at: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExcessSweptEvent {
+    pub token: Address,
+    pub amount: i128,
+    pub recipient: Address,
 }
 
 #[contracttype]
@@ -2261,6 +2271,43 @@ impl MilestoneEscrow {
     /// `fund` at a constant number of ledger writes.
     fn milestone_is_funded(meta: &JobMeta, milestone: &Milestone) -> bool {
         meta.funded || milestone.funded
+    }
+
+    fn is_terminal_status(status: &MilestoneStatus) -> bool {
+        matches!(
+            status,
+            MilestoneStatus::Released | MilestoneStatus::Refunded | MilestoneStatus::Split
+        )
+    }
+
+    fn outstanding_escrow_obligations(env: &Env, meta: &JobMeta) -> Result<i128, Error> {
+        let mut outstanding: i128 = 0;
+        for index in 0..meta.milestone_count {
+            let milestone = Self::load_milestone(env, index)?;
+            if Self::is_terminal_status(&milestone.status) {
+                continue;
+            }
+            let remaining = milestone
+                .amount
+                .checked_sub(milestone.released_amount)
+                .ok_or(Error::ArithmeticOverflow)?;
+            if remaining > 0 {
+                outstanding = outstanding
+                    .checked_add(remaining)
+                    .ok_or(Error::ArithmeticOverflow)?;
+            }
+        }
+        let yield_accrued: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::YieldAccrued)
+            .unwrap_or(0);
+        if yield_accrued > 0 {
+            outstanding = outstanding
+                .checked_add(yield_accrued)
+                .ok_or(Error::ArithmeticOverflow)?;
+        }
+        Ok(outstanding)
     }
 
     /// Write the delivery timestamp to temporary storage.  Temporary entries
@@ -6925,6 +6972,49 @@ impl MilestoneEscrow {
     pub fn get_job(env: Env) -> Result<Job, Error> {
         let meta = Self::load_job_meta(&env)?;
         Self::assemble_job(&env, &meta)
+    }
+
+    /// Recover tokens that are not backing outstanding escrow obligations.
+    ///
+    /// Authorized callers: the job client or the admin. Excess escrow-token
+    /// balance is returned to the client. Non-escrow tokens are returned in
+    /// full to the client after confirming they are not the settlement token.
+    pub fn sweep_excess(env: Env, caller: Address, token: Address) -> Result<i128, Error> {
+        Self::ensure_not_paused(&env)?;
+        caller.require_auth();
+        let meta = Self::load_job_meta(&env)?;
+        let admin = Self::load_admin(&env)?;
+        if caller != meta.client && caller != admin {
+            return Err(Error::Unauthorized);
+        }
+
+        let token_client = token::Client::new(&env, &token);
+        let balance = token_client.balance(&env.current_contract_address());
+        let excess = if token == meta.token {
+            let obligations = Self::outstanding_escrow_obligations(&env, &meta)?;
+            if balance < obligations {
+                return Err(Error::InsufficientBalance);
+            }
+            balance
+                .checked_sub(obligations)
+                .ok_or(Error::ArithmeticOverflow)?
+        } else {
+            balance
+        };
+        if excess <= 0 {
+            return Err(Error::NothingToSweep);
+        }
+
+        token_client.transfer(&env.current_contract_address(), &meta.client, &excess);
+        env.events().publish(
+            (symbol_short!("sweep"),),
+            ExcessSweptEvent {
+                token,
+                amount: excess,
+                recipient: meta.client,
+            },
+        );
+        Ok(excess)
     }
 
     /// Return the reputation counter for an address.

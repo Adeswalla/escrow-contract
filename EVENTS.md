@@ -18,6 +18,7 @@ row here, and a row here must correspond to a topic in the source.
 | `dispute`  | `DisputeRaisedEvent`             | state change      |
 | `dispescal`| `DisputeEscalatedEvent`          | state change      |
 | `resolve`  | `DisputeResolvedEvent`           | state change      |
+| `sweep`    | `ExcessSweptEvent`               | state change      |
 | `cancel`   | `CancelEscrowInitiatedEvent`     | state change      |
 | `cxlappr`  | `CancelApprovalRecordedEvent`    | state change      |
 | `cancelrev`| `CancelApprovalRevokedEvent`     | state change      |
