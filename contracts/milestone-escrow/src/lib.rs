@@ -7198,6 +7198,8 @@ mod cancel_escrow_split_refund_guards_tests;
 #[cfg(test)]
 mod cold_config_storage_tests;
 #[cfg(test)]
+mod cost_tests;
+#[cfg(test)]
 mod emergency_pause_allocation_guards_tests;
 #[cfg(test)]
 mod get_escrow_interest_yield_no_mutation_tests;
@@ -7241,8 +7243,6 @@ mod split_refund_net_distribution_precondition_tests;
 mod tax_withholding_split_refund_tests;
 #[cfg(test)]
 mod test;
-#[cfg(test)]
-mod cost_tests;
 #[cfg(test)]
 mod test_emergency_pause;
 #[cfg(test)]

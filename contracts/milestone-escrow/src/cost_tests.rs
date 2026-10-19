@@ -1,8 +1,12 @@
 #![cfg(test)]
 
+extern crate std;
+use std::println;
+
 use crate::{MilestoneEscrow, MilestoneEscrowClient};
 use soroban_sdk::{
-    testutils::{Address as _, EnvTestConfig, Ledger as _}, token, vec, Address, Env,
+    testutils::{Address as _, EnvTestConfig, Ledger as _},
+    token, vec, Address, Env,
 };
 
 const MILESTONE_AMOUNT: i128 = 1_000;
@@ -21,14 +25,29 @@ struct Fixture<'a> {
 #[derive(Clone, Copy)]
 struct Cost {
     name: &'static str,
-    instructions: u64,
+    instructions: i64,
     memory_read_entries: u32,
-    memory_read_bytes: u32,
+    mem_bytes: i64,
     disk_read_entries: u32,
     disk_read_bytes: u32,
     write_entries: u32,
     write_bytes: u32,
 }
+
+/// Budget per entry point: (name, max instructions, max write entries,
+/// max write bytes). Recorded from the current baselines (#764): write entries
+/// are exact, so an extra storage write fails the test; instructions and write
+/// bytes allow ~10% headroom for incidental changes. Raise a budget only with
+/// a reason in the PR.
+const BUDGETS: [(&str, i64, u32, u32); 7] = [
+    ("initialize", 225_000, 6, 1_660),
+    ("fund", 322_000, 4, 1_320),
+    ("mark_delivered", 167_000, 3, 495),
+    ("approve_milestone", 424_000, 7, 1_285),
+    ("claim_auto_release", 438_000, 6, 1_165),
+    ("raise_dispute", 238_000, 5, 700),
+    ("resolve_dispute", 476_000, 7, 1_165),
+];
 
 fn fixture(env: &Env) -> Fixture<'_> {
     env.ledger().set_timestamp(INITIAL_TIMESTAMP);
@@ -75,7 +94,7 @@ fn measure(name: &'static str, env: &Env) -> Cost {
         name,
         instructions: resources.instructions,
         memory_read_entries: resources.memory_read_entries,
-        memory_read_bytes: resources.memory_read_bytes,
+        mem_bytes: resources.mem_bytes,
         disk_read_entries: resources.disk_read_entries,
         disk_read_bytes: resources.disk_read_bytes,
         write_entries: resources.write_entries,
@@ -133,6 +152,7 @@ fn main_entrypoint_cost_baselines() {
     let setup = fixture(&env);
     initialize(&setup, &env);
     fund(&setup);
+    setup.escrow.mark_delivered(&setup.freelancer_addr, &0);
     setup.escrow.raise_dispute(&setup.client_addr, &0);
     let raise_dispute_cost = measure("raise_dispute", &env);
 
@@ -140,10 +160,9 @@ fn main_entrypoint_cost_baselines() {
     let setup = fixture(&env);
     initialize(&setup, &env);
     fund(&setup);
+    setup.escrow.mark_delivered(&setup.freelancer_addr, &0);
     setup.escrow.raise_dispute(&setup.client_addr, &0);
-    setup
-        .escrow
-        .resolve_dispute(&setup.arbiter_addr, &0, &true);
+    setup.escrow.resolve_dispute(&setup.arbiter_addr, &0, &true);
     let resolve_dispute_cost = measure("resolve_dispute", &env);
 
     let costs = [
@@ -174,12 +193,38 @@ fn main_entrypoint_cost_baselines() {
             cost.name,
             cost.instructions,
             cost.memory_read_entries,
-            cost.memory_read_bytes,
+            cost.mem_bytes,
             cost.disk_read_entries,
             cost.disk_read_bytes,
             cost.write_entries,
             cost.write_bytes
         );
         assert!(cost.instructions > 0, "{} was not metered", cost.name);
+        let (_, max_instructions, max_write_entries, max_write_bytes) = BUDGETS
+            .iter()
+            .find(|(name, ..)| *name == cost.name)
+            .copied()
+            .expect("every measured flow has a budget");
+        assert!(
+            cost.instructions <= max_instructions,
+            "{}: {} instructions exceeds the budget of {}",
+            cost.name,
+            cost.instructions,
+            max_instructions
+        );
+        assert!(
+            cost.write_entries <= max_write_entries,
+            "{}: {} ledger writes exceeds the budget of {}",
+            cost.name,
+            cost.write_entries,
+            max_write_entries
+        );
+        assert!(
+            cost.write_bytes <= max_write_bytes,
+            "{}: {} write bytes exceeds the budget of {}",
+            cost.name,
+            cost.write_bytes,
+            max_write_bytes
+        );
     }
 }
