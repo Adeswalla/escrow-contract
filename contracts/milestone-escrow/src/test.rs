@@ -8,6 +8,8 @@ mod emergency_pause_admin_override_tests;
 mod emergency_pause_test;
 #[path = "funding_mode_tests.rs"]
 mod funding_mode_tests;
+#[path = "revision_tests.rs"]
+mod revision_tests;
 use soroban_sdk::{
     contract, contractimpl, contracttype, testutils::Address as _, testutils::EnvTestConfig,
     testutils::Ledger, vec, Address, Env, FromVal, IntoVal, Symbol, TryIntoVal, Val,

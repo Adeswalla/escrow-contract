@@ -154,7 +154,11 @@ pub enum Error {
     /// `fund` was called on a PerMilestone escrow, or `fund_milestone`
     /// was called on an Upfront escrow.
     InvalidFundingMode = 40,
+    /// `request_revision` was called after `MAX_REVISIONS` revisions.
+    MaxRevisions = 41,
 }
+
+const MAX_REVISIONS: u32 = 3;
 
 const MAX_TREASURY_FEE_BPS: u32 = 2000;
 const MAX_CLIENT_FEE_BPS: u32 = 5000;
@@ -441,6 +445,8 @@ pub enum DataKey {
     /// Instance: `FundingMode` for this escrow. Absent keys default to
     /// `Upfront` so existing deployments keep whole-job funding.
     FundingMode,
+    /// Persistent per-milestone revision request count.
+    RevCnt(u32),
 }
 
 #[contracttype]
@@ -480,6 +486,16 @@ pub struct MilestoneFundedEvent {
     pub milestone_index: u32,
     pub amount: i128,
     pub token: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RevisionRequestedEvent {
+    pub contract_id: Address,
+    pub milestone_index: u32,
+    pub client: Address,
+    pub note_hash: BytesN<32>,
+    pub revision_count: u32,
 }
 
 #[contracttype]
@@ -3354,6 +3370,88 @@ impl MilestoneEscrow {
         );
 
         Ok(())
+    }
+
+    /// Ask the freelancer to revise a delivered milestone.
+    ///
+    /// Returns the milestone to `Pending`, clears `delivered_at` so the previous
+    /// auto-release clock cannot fire, and increments `revision_count` up to
+    /// `MAX_REVISIONS` (3). Accounting and funding are unchanged.
+    pub fn request_revision(
+        env: Env,
+        client: Address,
+        milestone_index: u32,
+        note_hash: BytesN<32>,
+    ) -> Result<(), Error> {
+        Self::ensure_not_paused(&env)?;
+        Self::assert_tax_withholding_not_locked(&env)?;
+        Self::assert_platform_fee_allocation_not_locked(&env)?;
+        Self::assert_emergency_pause_not_locked(&env)?;
+        Self::assert_time_ext_not_locked(&env)?;
+        Self::assert_payment_streaming_not_locked(&env)?;
+        client.require_auth();
+        let meta = Self::load_job_meta(&env)?;
+        if meta.client != client {
+            return Err(Error::Unauthorized);
+        }
+        if !meta.funded {
+            return Err(Error::NotFunded);
+        }
+        if milestone_index >= meta.milestone_count {
+            return Err(Error::InvalidMilestone);
+        }
+
+        let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        if milestone.status != MilestoneStatus::Delivered {
+            return Err(Error::InvalidStatus);
+        }
+
+        let current: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RevCnt(milestone_index))
+            .unwrap_or(0);
+        if current >= MAX_REVISIONS {
+            return Err(Error::MaxRevisions);
+        }
+        let revision_count = current + 1;
+        env.storage()
+            .persistent()
+            .set(&DataKey::RevCnt(milestone_index), &revision_count);
+
+        milestone.status = MilestoneStatus::Pending;
+        milestone.delivered_at = 0;
+        Self::store_milestone(&env, milestone_index, &milestone);
+        env.storage()
+            .temporary()
+            .remove(&DataKey::DeliveredAt(milestone_index));
+        env.storage()
+            .temporary()
+            .remove(&DataKey::TimeExt(milestone_index));
+
+        env.events().publish(
+            (symbol_short!("msrev"),),
+            RevisionRequestedEvent {
+                contract_id: env.current_contract_address(),
+                milestone_index,
+                client,
+                note_hash,
+                revision_count,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn get_revision_count(env: Env, milestone_index: u32) -> Result<u32, Error> {
+        let meta = Self::load_job_meta(&env)?;
+        if milestone_index >= meta.milestone_count {
+            return Err(Error::InvalidMilestone);
+        }
+        Ok(env
+            .storage()
+            .persistent()
+            .get(&DataKey::RevCnt(milestone_index))
+            .unwrap_or(0))
     }
 
     /// Extends the auto-release deadline for a Delivered milestone.

@@ -16,6 +16,7 @@ This contract allows a client to fund a job broken into milestones. Funds are lo
 | `fund` | Client | Deposit total amount into contract (Upfront mode) |
 | `fund_milestone` | Client | Deposit one milestone (PerMilestone mode) |
 | `mark_delivered` | Freelancer | Mark a milestone as delivered |
+| `request_revision` | Client | Return a delivered milestone to Pending (max 3) |
 | `approve_milestone` | Client | Release funds for a delivered milestone |
 | `raise_dispute` | Client or Freelancer | Freeze a milestone for arbitration |
 | `escalate_dispute` | Client or Freelancer | After the timeout, restore a disputed milestone to its previous status |
