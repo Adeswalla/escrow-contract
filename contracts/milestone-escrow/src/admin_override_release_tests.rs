@@ -69,10 +69,10 @@ fn unauthorized_caller_returns_unauthorized_and_does_not_mutate_storage() {
     let attacker = Address::generate(&env);
     let result = client.try_admin_override_release(&attacker, &0u32);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    assert_eq!(release_event_count(&env), 0);
 
     let after = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
     assert_ledger_unchanged(&before, &after);
-    assert_eq!(release_event_count(&env), 0);
 }
 
 #[test]
@@ -93,10 +93,10 @@ fn illegal_terminal_source_state_returns_invalid_status_and_does_not_mutate_stor
 
     let result = client.try_admin_override_release(&admin_addr, &0u32);
     assert_eq!(result, Err(Ok(Error::InvalidStatus)));
+    assert_eq!(release_event_count(&env), 0);
 
     let after = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
     assert_ledger_unchanged(&before, &after);
-    assert_eq!(release_event_count(&env), 0);
 }
 
 #[test]
@@ -111,10 +111,10 @@ fn client_freelancer_and_arbiter_are_unauthorized_without_storage_mutation() {
     for caller in [client_addr.clone(), freelancer_addr.clone(), arbiter_addr] {
         let result = client.try_admin_override_release(&caller, &0u32);
         assert_eq!(result, Err(Ok(Error::Unauthorized)));
+        assert_eq!(release_event_count(&env), 0);
         let after = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
         assert_ledger_unchanged(&before, &after);
     }
-    assert_eq!(release_event_count(&env), 0);
 }
 
 #[test]
@@ -127,11 +127,13 @@ fn admin_override_release_releases_funds_to_freelancer() {
 
     let before = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
     client.admin_override_release(&admin_addr, &0u32);
+    // Events cover only the latest invocation; count them before the view
+    // calls in snapshot_release_ledger replace them.
+    assert_eq!(release_event_count(&env), 1);
 
     let after = snapshot_release_ledger(&env, &client, &token_id, &freelancer_addr);
     assert_eq!(after.status, MilestoneStatus::Released);
     assert_eq!(after.released_amount, 1_000);
     assert_eq!(after.freelancer_balance, before.freelancer_balance + 1_000);
     assert_eq!(after.contract_balance, before.contract_balance - 1_000);
-    assert_eq!(release_event_count(&env), 1);
 }
