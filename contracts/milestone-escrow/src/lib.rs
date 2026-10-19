@@ -3651,6 +3651,12 @@ impl MilestoneEscrow {
     /// milestone to `Disputed`, from which only `resolve_dispute` (or a
     /// split via `apply_dispute_arbitration_split`) can move it forward.
     ///
+    /// A dispute raised while the milestone is `Pending` is a *pre-delivery
+    /// (scope) dispute*; one raised while `Delivered` or `PartiallyReleased`
+    /// is a *delivery (quality) dispute*. Both freeze the milestone and share
+    /// the same arbiter outcomes. See `SPEC.md` §"Dispute semantics" for
+    /// the full per-status contract.
+    ///
     /// # Parameters
     /// * `caller`          – Must be either the job's client or freelancer.
     ///                       Must authorize the call.
@@ -3748,8 +3754,10 @@ impl MilestoneEscrow {
             return Err(Error::InvalidAmount);
         }
 
-        // Disputing a milestone is only allowed after delivery. A Pending
-        // milestone has no delivered work to arbitrate.
+        // Strict state machine (see SPEC.md "Dispute semantics"): a dispute
+        // needs delivered work to arbitrate, so only Delivered (quality) and
+        // PartiallyReleased (the unreleased remainder) may be disputed. Pending,
+        // Disputed and the terminal statuses are rejected with InvalidStatus.
         match milestone.status {
             MilestoneStatus::Delivered | MilestoneStatus::PartiallyReleased => {}
             _ => return Err(Error::InvalidStatus),
@@ -7221,6 +7229,8 @@ mod cold_config_storage_tests;
 mod cost_tests;
 #[cfg(test)]
 mod emergency_pause_allocation_guards_tests;
+#[cfg(test)]
+mod event_docs_sync_tests;
 #[cfg(test)]
 mod get_escrow_interest_yield_no_mutation_tests;
 #[cfg(test)]
