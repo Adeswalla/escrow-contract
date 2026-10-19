@@ -43,7 +43,7 @@ pub enum Error {
     AlreadyInitialized = 1,
     /// A call required the contract to be initialized but it was not.
     NotInitialized = 2,
-    /// `fund_escrow` was called after the escrow was already funded.
+    /// `fund` was called after the escrow was already funded.
     AlreadyFunded = 3,
     /// An operation that requires the escrow to be funded was attempted while it was not.
     NotFunded = 4,
