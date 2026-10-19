@@ -59,6 +59,8 @@ mod multisig_approval_init_event_tests;
 mod multisig_approval_init_footprint_tests;
 #[path = "multisig_approve_footprint_tests.rs"]
 mod multisig_approve_footprint_tests;
+#[path = "multisig_error_branches_tests.rs"]
+mod multisig_error_branches_tests;
 #[path = "multisig_lock_event_tests.rs"]
 mod multisig_lock_event_tests;
 #[path = "multisig_split_refund_tests.rs"]
@@ -71,6 +73,8 @@ mod platform_fee_allocation_no_mutation_tests;
 mod platform_fee_split_overflow_tests;
 #[path = "propose_admin_transfer_footprint_tests.rs"]
 mod propose_admin_transfer_footprint_tests;
+#[path = "ratio_split_boundary_tests.rs"]
+mod ratio_split_boundary_tests;
 #[path = "read_path_tests.rs"]
 mod read_path_tests;
 #[path = "reputation_no_mutation_tests.rs"]
@@ -81,10 +85,14 @@ mod revoke_cancel_approval_tests;
 mod set_escrow_interest_yield_guards_tests;
 #[path = "split_refund_net_distribution_tests.rs"]
 mod split_refund_net_distribution_tests;
+#[path = "tax_settlement_paths_tests.rs"]
+mod tax_settlement_paths_tests;
 #[path = "tax_withholding_tests.rs"]
 mod tax_withholding_tests;
 #[path = "version_tests.rs"]
 mod version_tests;
+#[path = "whitelist_management_error_paths_tests.rs"]
+mod whitelist_management_error_paths_tests;
 
 #[contracttype]
 enum ReentrantTokenDataKey {
