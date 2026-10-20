@@ -1352,8 +1352,11 @@ pub struct PaymentStreamingEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaymentStreamingConsentEvent {
+    pub contract_id: Address,
+    pub milestone_index: u32,
     pub client: Address,
     pub freelancer: Address,
+    pub token: Address,
     pub total_amount: i128,
     pub numerator: i128,
     pub denominator: i128,
@@ -1362,18 +1365,18 @@ pub struct PaymentStreamingConsentEvent {
 }
 
 /// Emitted by `time_extensions_consent` once both the client's
-/// and the freelancer's signatures have been collected and the time-extension
-/// split has been computed.
+/// and the freelancer's signatures have been collected and the deadline
+/// extension has been written to storage.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TimeExtConsentEvent {
+    pub contract_id: Address,
+    pub milestone_index: u32,
     pub client: Address,
     pub freelancer: Address,
-    pub amount: i128,
-    pub elapsed_seconds: i128,
-    pub total_seconds: i128,
-    pub freelancer_share: i128,
-    pub client_refund: i128,
+    pub extra_seconds: u32,
+    pub new_extension: u32,
+    pub new_deadline: u64,
 }
 
 // ── emergency_pause events ──────────────────────────────────────────────────
@@ -6223,77 +6226,40 @@ impl MilestoneEscrow {
         Ok(split)
     }
 
-    /// Compute a streaming milestone split that requires **dual consent**:
-    /// both the client and the freelancer must independently sign the
-    /// transaction.
+    /// Stream a partial payment from a milestone's escrowed balance to the
+    /// freelancer with **dual consent**: both the client and the freelancer
+    /// must independently sign the transaction.
     ///
-    /// `payment_streaming_milestones` shares this guard block: it now
-    /// authenticates the caller, requires an initialised escrow, rejects
-    /// paused or mid-execution source states, and collects both signatures
-    /// before it computes anything.  This endpoint is its settlement
-    /// counterpart, additionally recording a `p_strcns` event that names both
-    /// signers on-chain rather than the anonymous `p_stream` payload.
-    ///
-    /// # Signature collection
-    /// `require_client_and_freelancer_consent` calls `require_auth()` on the
-    /// client address and then on the freelancer address, both taken from the
-    /// stored job metadata rather than from caller-supplied arguments.  If
-    /// either signature is missing from the transaction the host-level auth
-    /// check panics before any ratio validation runs, so a single-signature
-    /// attempt reverts the invocation entirely.  Neither party can be
-    /// impersonated by passing a different address, because no address is
-    /// accepted as a parameter.
+    /// Unlike `payment_streaming_milestones` which is a pure calculator, this
+    /// endpoint actually transfers tokens: `numerator/denominator` of the
+    /// milestone's remaining balance is released to the freelancer, and the
+    /// rest stays in the escrow.  The milestone transitions to
+    /// `PartiallyReleased` (or `Released` if the full amount is streamed).
     ///
     /// # Parameters
-    /// * `total_amount` – Total streaming amount; must be > 0.
-    /// * `numerator`    – Streamed portion; must satisfy 0 ≤ n ≤ denominator.
-    /// * `denominator`  – Ratio denominator; must be > 0.
+    /// * `milestone_index` – Index of the milestone to stream from.
+    /// * `numerator`        – Streamed portion; must satisfy 0 ≤ n ≤ denominator.
+    /// * `denominator`      – Ratio denominator; must be > 0.
     ///
     /// # Returns
     /// A `RatioSplit` where `first` is the streamed payout and `second` is the
-    /// client refund.  The two always sum to `total_amount` exactly.
-    ///
-    /// # Checked arithmetic
-    /// Every `i128` operation this endpoint performs is checked, so an overflow
-    /// surfaces as a typed `Error::InvalidAmount` rather than a panic or a
-    /// silent wrap:
-    /// * `total_amount × numerator` is probed with `i128::checked_mul` in
-    ///   `validate_streaming_ratio` **before** the
-    ///   `PaymentStreamingExecutionLock` is taken, so a rejected invocation
-    ///   writes no ledger entry.
-    /// * The same product, the `denominator / 2` rounding bias and the
-    ///   `total − rounded` remainder are all `checked_mul` / `checked_add` /
-    ///   `checked_sub` inside `split_round_nearest`.
+    /// remaining balance.  The two always sum to the remaining amount exactly.
     ///
     /// # Errors
-    /// * `NotInitialized` – Job metadata missing, so no signers are known.
-    /// * `InvalidAmount`  – `total_amount` ≤ 0, or `total_amount × numerator`
-    ///   overflows `i128`.
-    /// * `InvalidRatio`   – `denominator` ≤ 0, or `numerator` outside
+    /// * `NotInitialized`  – Job metadata missing, so no signers are known.
+    /// * `Paused`           – The escrow is administratively or emergency paused.
+    /// * `InvalidMilestone` – `milestone_index` is out of range.
+    /// * `InvalidStatus`    – Milestone is not `Delivered` or `PartiallyReleased`.
+    /// * `InvalidAmount`    – Remaining balance ≤ 0, or arithmetic overflow.
+    /// * `InvalidRatio`     – `denominator` ≤ 0, or `numerator` outside
     ///   `0..=denominator`.
     pub fn payment_streaming_consent(
         env: Env,
-        total_amount: i128,
+        milestone_index: u32,
         numerator: i128,
         denominator: i128,
     ) -> Result<RatioSplit, Error> {
-        // Validate pure inputs before any storage access so invalid
-        // parameters never touch the ledger (footprint reduction for
-        // failure cases).
-        if total_amount <= 0 {
-            return Err(Error::InvalidAmount);
-        }
-        if denominator <= 0 {
-            return Err(Error::InvalidRatio);
-        }
-        if numerator < 0 || numerator > denominator {
-            return Err(Error::InvalidRatio);
-        }
-
-        // Reject illegal source state before any further ledger access
-        // (including the execution lock) so a mistaken call never
-        // mutates storage. This also keeps the success-path footprint
-        // to a single instance ledger entry (Job + lock).
+        // Reject illegal source state before any further ledger access.
         Self::assert_payment_streaming_not_locked(&env)?;
         Self::assert_not_paused(&env)?;
         let emergency_paused: bool = env.storage().instance().get(&DataKey::Ep).unwrap_or(false);
@@ -6305,27 +6271,67 @@ impl MilestoneEscrow {
         // lock write if Job metadata is missing.
         let meta = Self::require_client_and_freelancer_consent(&env)?;
 
-        // Validate every input — including the overflow domain of the scaled
-        // product — before touching storage.  A rejected invocation therefore
-        // takes no execution lock and leaves no partial write behind.
-        Self::validate_streaming_ratio(total_amount, numerator, denominator)?;
+        if milestone_index >= meta.milestone_count {
+            return Err(Error::InvalidMilestone);
+        }
+
+        let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        if milestone.status != MilestoneStatus::Delivered
+            && milestone.status != MilestoneStatus::PartiallyReleased
+        {
+            return Err(Error::InvalidStatus);
+        }
+
+        let remaining = milestone
+            .amount
+            .checked_sub(milestone.released_amount)
+            .ok_or(Error::InvalidAmount)?;
+        if remaining <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+
+        // Validate ratio inputs before touching storage.
+        Self::validate_streaming_ratio(remaining, numerator, denominator)?;
 
         env.storage()
             .instance()
             .set(&DataKey::PaymentStreamingExecutionLock, &true);
 
         let result = (|| {
-            // `validate_streaming_ratio` already proved the scaled product is
-            // representable, and `split_round_nearest` re-checks every
-            // operation, so the arithmetic below cannot overflow.
-            let split = Self::split_round_nearest(total_amount, numerator, denominator)?;
+            let split = Self::split_round_nearest(remaining, numerator, denominator)?;
+
+            let token_client = token::Client::new(&env, &meta.token);
+            let contract_addr = env.current_contract_address();
+
+            if split.first > 0 {
+                token_client.transfer(&contract_addr, &meta.freelancer, &split.first);
+            }
+
+            milestone.released_amount = milestone
+                .released_amount
+                .checked_add(split.first)
+                .ok_or(Error::InvalidAmount)?;
+
+            if milestone.released_amount >= milestone.amount {
+                milestone.status = MilestoneStatus::Released;
+                Self::store_milestone_released(&env, milestone_index);
+                Self::increment_reputation(&env, &meta.client);
+                Self::increment_reputation(&env, &meta.freelancer);
+            } else {
+                milestone.status = MilestoneStatus::PartiallyReleased;
+            }
+
+            Self::store_milestone(&env, milestone_index, &milestone);
 
             env.events().publish(
                 (symbol_short!("p_strcns"),),
                 PaymentStreamingConsentEvent {
+                    contract_id: contract_addr,
+                    milestone_index,
                     client: meta.client.clone(),
                     freelancer: meta.freelancer.clone(),
-                    total_amount,
+                    token: meta.token.clone(),
+                    total_amount: remaining,
                     numerator,
                     denominator,
                     streamed_payout: split.first,
@@ -6451,48 +6457,38 @@ impl MilestoneEscrow {
         result
     }
 
-    /// Compute a milestone time-extension split that requires **dual consent**:
-    /// both the client and the freelancer must independently sign the
-    /// transaction.
+    /// Extend the auto-release deadline for a Delivered milestone with
+    /// **dual consent**: both the client and the freelancer must independently
+    /// sign the transaction.
     ///
-    /// The split is only computed after the caller has been authenticated and
-    /// the escrow has been initialised; a transaction carrying only one of the
-    /// two signatures never reaches the split arithmetic, so a single-signature
-    /// attempt reverts the whole invocation and no state is mutated.
+    /// Unlike `extend_milestone_deadline` which requires only the client's
+    /// signature, this endpoint requires both parties' auth.  When both
+    /// parties agree to an extension, the cumulative extension is written to
+    /// `DataKey::TimeExt(milestone_index)` so that `time_until_auto_release`
+    /// and `claim_auto_release` reflect the new deadline.
     ///
-    /// A transaction carrying only one of the two signatures never reaches the
-    /// split arithmetic: the missing `require_auth()` panics at the host level,
-    /// so a single-signature attempt reverts the whole invocation.
+    /// # Parameters
+    /// * `milestone_index` – Index of the milestone to extend.
+    /// * `extra_seconds`   – Additional seconds to add to the deadline. Must
+    ///                        be > 0.
     ///
     /// # Errors
-    /// * `NotInitialized` – Job metadata missing, so no signers are known.
-    /// * `InvalidAmount`  – `amount` ≤ 0, or arithmetic overflow.
-    /// * `InvalidRatio`   – Invalid elapsed/total seconds.
+    /// * `NotInitialized`    – Job metadata missing, so no signers are known.
+    /// * `Paused`            – The escrow is administratively or emergency paused.
+    /// * `InvalidMilestone`  – `milestone_index` is out of range.
+    /// * `InvalidStatus`     – Milestone is not `Delivered` or `PartiallyReleased`.
+    /// * `InvalidExtension`   – `extra_seconds` is 0, or the cumulative
+    ///                          extension overflows `u32`.
     pub fn time_extensions_consent(
         env: Env,
-        amount: i128,
-        elapsed_seconds: i128,
-        total_seconds: i128,
-    ) -> Result<RatioSplit, Error> {
-        // Validate pure inputs before any storage access so invalid
-        // parameters never touch the ledger (footprint reduction for
-        // failure cases and to ensure overflow is caught via checked
-        // ops rather than panicking).
-        if amount <= 0 {
-            return Err(Error::InvalidAmount);
-        }
-        if total_seconds <= 0 {
-            return Err(Error::InvalidRatio);
-        }
-        if elapsed_seconds < 0 || elapsed_seconds > total_seconds {
-            return Err(Error::InvalidRatio);
-        }
-
-        // Reject illegal source state before any further ledger access
-        // (including the execution lock) so a mistaken call never
-        // mutates storage.
-        Self::assert_time_ext_not_locked(&env)?;
+        milestone_index: u32,
+        extra_seconds: u32,
+    ) -> Result<(), Error> {
+        // Reject illegal source state before collecting signatures so a
+        // mistaken call never mutates storage.
         Self::assert_not_paused(&env)?;
+        Self::assert_time_ext_not_locked(&env)?;
+        Self::assert_payment_streaming_not_locked(&env)?;
         let emergency_paused: bool = env.storage().instance().get(&DataKey::Ep).unwrap_or(false);
         if emergency_paused {
             return Err(Error::Paused);
@@ -6502,34 +6498,47 @@ impl MilestoneEscrow {
         // lock write if Job metadata is missing.
         let meta = Self::require_client_and_freelancer_consent(&env)?;
 
+        if milestone_index >= meta.milestone_count {
+            return Err(Error::InvalidMilestone);
+        }
+
+        let milestone = Self::load_milestone(&env, milestone_index)?;
+        if milestone.status != MilestoneStatus::Delivered
+            && milestone.status != MilestoneStatus::PartiallyReleased
+        {
+            return Err(Error::InvalidStatus);
+        }
+
+        if extra_seconds == 0 {
+            return Err(Error::InvalidExtension);
+        }
+
+        let current_extension = Self::load_time_extension(&env, milestone_index);
+        let new_extension = current_extension
+            .checked_add(extra_seconds)
+            .ok_or(Error::InvalidExtension)?;
+        let delivered_at =
+            Self::load_delivered_at(&env, milestone_index).unwrap_or(milestone.delivered_at);
+        let new_deadline = Self::auto_release_deadline(&meta, delivered_at, new_extension)?;
+
         env.storage()
-            .instance()
-            .set(&DataKey::TimeExtExecutionLock, &true);
+            .temporary()
+            .set(&DataKey::TimeExt(milestone_index), &new_extension);
 
-        let result = (|| {
-            let split = Self::split_round_nearest(amount, elapsed_seconds, total_seconds)?;
+        env.events().publish(
+            (symbol_short!("m_extcns"),),
+            TimeExtConsentEvent {
+                contract_id: env.current_contract_address(),
+                milestone_index,
+                client: meta.client,
+                freelancer: meta.freelancer,
+                extra_seconds,
+                new_extension,
+                new_deadline,
+            },
+        );
 
-            env.events().publish(
-                (symbol_short!("m_extcns"),),
-                TimeExtConsentEvent {
-                    client: meta.client.clone(),
-                    freelancer: meta.freelancer.clone(),
-                    amount,
-                    elapsed_seconds,
-                    total_seconds,
-                    freelancer_share: split.first,
-                    client_refund: split.second,
-                },
-            );
-
-            Ok(split)
-        })();
-
-        env.storage()
-            .instance()
-            .remove(&DataKey::TimeExtExecutionLock);
-
-        result
+        Ok(())
     }
 
     /// Split `total_amount` into per-party shares without changing contract state.
@@ -7408,7 +7417,21 @@ impl MilestoneEscrow {
     /// Estimate the interest yield that would accrue on an escrowed balance
     /// over a given duration, using a simple-interest model.
     ///
+    /// # Authorization and preconditions
+    ///
+    /// The guard block runs at the top of this function, before any
+    /// calculation or event publish, so an unauthorized or uninitialized call
+    /// is rejected before any work is done:
+    ///
+    /// 1. **Authorization** — `admin.require_auth()` inside `require_admin`
+    ///    makes the host reject a missing signature before the contract body
+    ///    executes. The stored-admin equality check then rejects a
+    ///    validly-signed non-admin with `Unauthorized`.
+    /// 2. **Initialized state** — `require_initialized` ensures the contract
+    ///    has been set up, so the estimator is always anchored to a real job.
+    ///
     /// # Parameters
+    /// * `admin`             – Caller; must be the stored contract admin.
     /// * `principal`         – Balance (token stroops) on which interest is
     ///                         calculated. Must be > 0.
     /// * `annual_rate_bps`   – Annual interest rate in basis points
@@ -7423,15 +7446,30 @@ impl MilestoneEscrow {
     /// ```
     ///
     /// # Errors
-    /// * `InvalidAmount` – Zero/negative principal, rate, or duration, or an
-    ///                     intermediate checked multiplication overflows.
-    /// * `InvalidRatio`  – `annual_rate_bps` exceeds 10_000 (unsupported).
+    /// * `NotInitialized` – Contract has never been initialised.
+    /// * `Unauthorized`    – `admin` does not match the stored admin.
+    /// * `InvalidAmount`   – Zero/negative principal, rate, or duration, or an
+    ///                       intermediate checked multiplication overflows.
+    /// * `InvalidRatio`   – `annual_rate_bps` exceeds 10_000 (unsupported).
     pub fn escrow_interest_yield(
         env: Env,
+        admin: Address,
         principal: i128,
         annual_rate_bps: i128,
         duration_seconds: i128,
     ) -> Result<i128, Error> {
+        // Authorization: admin.require_auth() runs inside require_admin, so a
+        // transaction missing the admin signature is rejected by the host
+        // before this body executes at all. The equality check then rejects a
+        // validly-signed non-admin. Both guards run before any calculation or
+        // event publish, so an unauthorized caller learns nothing about the
+        // configuration.
+        Self::require_admin(&env, &admin)?;
+
+        // Precondition: the escrow must be initialized so the estimator is
+        // anchored to a real job rather than a fresh or uninitialized instance.
+        Self::require_initialized(&env)?;
+
         Self::validate_interest_yield_params(principal, annual_rate_bps, duration_seconds)?;
 
         let numerator = principal
