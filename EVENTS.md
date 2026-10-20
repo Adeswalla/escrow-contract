@@ -11,6 +11,7 @@ row here, and a row here must correspond to a topic in the source.
 | `fund`     | `FundedEvent`                    | state change      |
 | `msfund`   | `MilestoneFundedEvent`           | state change      |
 | `deliver`  | `DeliveredEvent`                 | state change      |
+| `msrev`    | `RevisionRequestedEvent`         | state change      |
 | `approve`  | `ApprovedEvent`                  | state change      |
 | `claim`    | `ClaimedEvent`                   | state change      |
 | `extend`   | `DeadlineExtendedEvent`          | state change      |
