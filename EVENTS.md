@@ -9,6 +9,7 @@ row here, and a row here must correspond to a topic in the source.
 | ---------- | -------------------------------- | ----------------- |
 | `init`     | `InitializedEvent`               | state change      |
 | `fund`     | `FundedEvent`                    | state change      |
+| `msfund`   | `MilestoneFundedEvent`           | state change      |
 | `deliver`  | `DeliveredEvent`                 | state change      |
 | `approve`  | `ApprovedEvent`                  | state change      |
 | `claim`    | `ClaimedEvent`                   | state change      |

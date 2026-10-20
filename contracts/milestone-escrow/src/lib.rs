@@ -151,6 +151,9 @@ pub enum Error {
     InvalidDisputeTimeout = 38,
     /// The configured dispute timeout has not elapsed yet.
     DisputeTimeoutNotReached = 39,
+    /// `fund` was called on a PerMilestone escrow, or `fund_milestone`
+    /// was called on an Upfront escrow.
+    InvalidFundingMode = 40,
 }
 
 const MAX_TREASURY_FEE_BPS: u32 = 2000;
@@ -184,6 +187,7 @@ pub struct Milestone {
     pub released_amount: i128,
     pub status: MilestoneStatus,
     pub delivered_at: u64,
+    pub funded: bool,
 }
 
 #[contracttype]
@@ -203,6 +207,13 @@ pub struct Job {
     pub milestones: Vec<Milestone>,
     pub funded: bool,
     pub auto_release_seconds: u64,
+}
+
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum FundingMode {
+    Upfront,
+    PerMilestone,
 }
 
 #[contracttype]
@@ -427,6 +438,9 @@ pub enum DataKey {
     DisputeInfo(u32),
     /// Instance: the configured timeout for dispute escalation.
     DisputeTimeout,
+    /// Instance: `FundingMode` for this escrow. Absent keys default to
+    /// `Upfront` so existing deployments keep whole-job funding.
+    FundingMode,
 }
 
 #[contracttype]
@@ -456,6 +470,16 @@ pub struct FundedEvent {
     pub milestone_count: u32,
     pub auto_release_seconds: u64,
     pub funded: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneFundedEvent {
+    pub contract_id: Address,
+    pub client: Address,
+    pub milestone_index: u32,
+    pub amount: i128,
+    pub token: Address,
 }
 
 #[contracttype]
@@ -2171,6 +2195,58 @@ impl MilestoneEscrow {
             .set(&DataKey::Milestone(index), milestone);
     }
 
+    fn load_funding_mode(env: &Env) -> FundingMode {
+        env.storage()
+            .instance()
+            .get(&DataKey::FundingMode)
+            .unwrap_or(FundingMode::Upfront)
+    }
+
+    fn require_escrow_has_funding(env: &Env, meta: &JobMeta) -> Result<(), Error> {
+        if meta.funded {
+            return Ok(());
+        }
+        if Self::load_funding_mode(env) == FundingMode::PerMilestone {
+            for index in 0..meta.milestone_count {
+                if Self::load_milestone(env, index)?.funded {
+                    return Ok(());
+                }
+            }
+        }
+        Err(Error::NotFunded)
+    }
+
+    fn require_milestone_is_funded(
+        env: &Env,
+        meta: &JobMeta,
+        milestone: &Milestone,
+    ) -> Result<(), Error> {
+        match Self::load_funding_mode(env) {
+            FundingMode::Upfront => {
+                if meta.funded {
+                    Ok(())
+                } else {
+                    Err(Error::NotFunded)
+                }
+            }
+            FundingMode::PerMilestone => {
+                if Self::milestone_is_funded(meta, milestone) {
+                    Ok(())
+                } else {
+                    Err(Error::NotFunded)
+                }
+            }
+        }
+    }
+
+    /// A milestone counts as funded when the whole job is funded (Upfront, or
+    /// PerMilestone once every milestone is funded) or when it was funded on
+    /// its own. Upfront funding does not rewrite each milestone, which keeps
+    /// `fund` at a constant number of ledger writes.
+    fn milestone_is_funded(meta: &JobMeta, milestone: &Milestone) -> bool {
+        meta.funded || milestone.funded
+    }
+
     /// Write the delivery timestamp to temporary storage.  Temporary entries
     /// are automatically evicted by the network after their TTL expires, which
     /// makes them the correct storage tier for single-use, deadline-scoped
@@ -2384,7 +2460,9 @@ impl MilestoneEscrow {
     fn assemble_job(env: &Env, meta: &JobMeta) -> Result<Job, Error> {
         let mut milestones = Vec::new(env);
         for i in 0..meta.milestone_count {
-            milestones.push_back(Self::load_milestone(env, i)?);
+            let mut milestone = Self::load_milestone(env, i)?;
+            milestone.funded = Self::milestone_is_funded(meta, &milestone);
+            milestones.push_back(milestone);
         }
         Ok(Job {
             client: meta.client.clone(),
@@ -2651,6 +2729,7 @@ impl MilestoneEscrow {
                     released_amount: 0,
                     status: MilestoneStatus::Pending,
                     delivered_at: 0,
+                    funded: false,
                 },
             );
         }
@@ -2677,6 +2756,9 @@ impl MilestoneEscrow {
         };
 
         Self::store_job_meta(&env, &meta);
+        env.storage()
+            .instance()
+            .set(&DataKey::FundingMode, &FundingMode::Upfront);
 
         // Emit a structured initialization event so downstream indexers can
         // record all operational parameters from a single on-chain event without
@@ -2697,6 +2779,36 @@ impl MilestoneEscrow {
             },
         );
 
+        Ok(())
+    }
+
+    /// Same as `initialize`, with an explicit funding mode. `initialize`
+    /// always uses `FundingMode::Upfront` so existing callers stay compatible.
+    #[allow(clippy::too_many_arguments)]
+    pub fn initialize_with_funding_mode(
+        env: Env,
+        admin: Address,
+        client: Address,
+        freelancer: Address,
+        arbiter: Address,
+        token: Address,
+        auto_release_seconds: u64,
+        milestone_amounts: Vec<i128>,
+        funding_mode: FundingMode,
+    ) -> Result<(), Error> {
+        Self::initialize(
+            env.clone(),
+            admin,
+            client,
+            freelancer,
+            arbiter,
+            token,
+            auto_release_seconds,
+            milestone_amounts,
+        )?;
+        env.storage()
+            .instance()
+            .set(&DataKey::FundingMode, &funding_mode);
         Ok(())
     }
 
@@ -3040,6 +3152,9 @@ impl MilestoneEscrow {
         client.require_auth();
         let mut meta = Self::load_job_meta(&env)?;
 
+        if Self::load_funding_mode(&env) != FundingMode::Upfront {
+            return Err(Error::InvalidFundingMode);
+        }
         if meta.funded {
             return Err(Error::AlreadyFunded);
         }
@@ -3073,6 +3188,80 @@ impl MilestoneEscrow {
         );
 
         Ok(())
+    }
+
+    /// Fund a single milestone when the escrow uses `FundingMode::PerMilestone`.
+    pub fn fund_milestone(env: Env, client: Address, milestone_index: u32) -> Result<(), Error> {
+        Self::ensure_not_paused(&env)?;
+        Self::assert_tax_withholding_not_locked(&env)?;
+        Self::assert_platform_fee_allocation_not_locked(&env)?;
+        Self::assert_emergency_pause_not_locked(&env)?;
+        Self::assert_time_ext_not_locked(&env)?;
+        Self::assert_payment_streaming_not_locked(&env)?;
+        Self::validate_fund_client(&env, &client)?;
+        client.require_auth();
+        let mut meta = Self::load_job_meta(&env)?;
+
+        if Self::load_funding_mode(&env) != FundingMode::PerMilestone {
+            return Err(Error::InvalidFundingMode);
+        }
+        if meta.client != client {
+            return Err(Error::Unauthorized);
+        }
+        if milestone_index >= meta.milestone_count {
+            return Err(Error::InvalidMilestone);
+        }
+
+        let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        if milestone.funded {
+            return Err(Error::AlreadyFunded);
+        }
+        if milestone.amount <= 0 {
+            return Err(Error::InvalidAmount);
+        }
+
+        let token_client = token::Client::new(&env, &meta.token);
+        let before = token_client.balance(&env.current_contract_address());
+        token_client.transfer(&client, env.current_contract_address(), &milestone.amount);
+        let after = token_client.balance(&env.current_contract_address());
+        let received = after.checked_sub(before).unwrap_or(0);
+        if received != milestone.amount {
+            return Err(Error::InsufficientBalance);
+        }
+
+        milestone.funded = true;
+        Self::store_milestone(&env, milestone_index, &milestone);
+
+        let mut all_funded = true;
+        for index in 0..meta.milestone_count {
+            if !Self::load_milestone(&env, index)?.funded {
+                all_funded = false;
+                break;
+            }
+        }
+        if all_funded {
+            meta.funded = true;
+            Self::store_job_meta(&env, &meta);
+        }
+
+        env.events().publish(
+            (symbol_short!("msfund"),),
+            MilestoneFundedEvent {
+                contract_id: env.current_contract_address(),
+                client,
+                milestone_index,
+                amount: milestone.amount,
+                token: meta.token,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Current funding mode. Missing storage defaults to `Upfront`.
+    pub fn get_funding_mode(env: Env) -> Result<FundingMode, Error> {
+        let _ = Self::load_job_meta(&env)?;
+        Ok(Self::load_funding_mode(&env))
     }
 
     /// Mark a milestone as delivered by the freelancer.
@@ -3127,14 +3316,12 @@ impl MilestoneEscrow {
         if meta.freelancer != freelancer {
             return Err(Error::Unauthorized);
         }
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
         if milestone_index >= meta.milestone_count {
             return Err(Error::InvalidMilestone);
         }
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        Self::require_milestone_is_funded(&env, &meta, &milestone)?;
 
         if milestone.amount <= 0 {
             return Err(Error::InvalidAmount);
@@ -3281,6 +3468,7 @@ impl MilestoneEscrow {
         }
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        Self::require_milestone_is_funded(&env, &meta, &milestone)?;
 
         // CHECK 2: Milestone must be in the Delivered state.  Any other status —
         // including Released (double-claim), Disputed, Refunded, Pending, or
@@ -3456,15 +3644,14 @@ impl MilestoneEscrow {
         if meta.client != client {
             return Err(Error::Unauthorized);
         }
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
 
         if milestone_index >= meta.milestone_count {
             return Err(Error::InvalidMilestone);
         }
 
         let milestone = Self::load_milestone(&env, milestone_index)?;
+        Self::require_milestone_is_funded(&env, &meta, &milestone)?;
 
         if milestone.status != MilestoneStatus::Delivered
             && milestone.status != MilestoneStatus::PartiallyReleased
@@ -3576,15 +3763,14 @@ impl MilestoneEscrow {
         if meta.client != client {
             return Err(Error::Unauthorized);
         }
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
 
         if milestone_index >= meta.milestone_count {
             return Err(Error::InvalidMilestone);
         }
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        Self::require_milestone_is_funded(&env, &meta, &milestone)?;
         if milestone.status != MilestoneStatus::Delivered {
             return Err(Error::InvalidStatus);
         }
@@ -3738,9 +3924,7 @@ impl MilestoneEscrow {
         milestone_index: u32,
         meta: JobMeta,
     ) -> Result<(), Error> {
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(env, &meta)?;
 
         // ── Input validation: index boundary check ───────────────────────
         if milestone_index >= meta.milestone_count {
@@ -3748,6 +3932,7 @@ impl MilestoneEscrow {
         }
 
         let mut milestone = Self::load_milestone(env, milestone_index)?;
+        Self::require_milestone_is_funded(env, &meta, &milestone)?;
 
         // ── Input validation: non-zero positive amount ───────────────────
         if milestone.amount <= 0 {
@@ -3944,11 +4129,10 @@ impl MilestoneEscrow {
         if meta.arbiter != arbiter {
             return Err(Error::Unauthorized);
         }
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        Self::require_milestone_is_funded(&env, &meta, &milestone)?;
 
         // Strict state machine: resolve_dispute may only run while the
         // milestone is Disputed. Every other source status is rejected with
@@ -4184,11 +4368,10 @@ impl MilestoneEscrow {
         if meta.arbiter != arbiter {
             return Err(Error::Unauthorized);
         }
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        Self::require_milestone_is_funded(&env, &meta, &milestone)?;
         if milestone.status != MilestoneStatus::Disputed {
             return Err(Error::InvalidStatus);
         }
@@ -4364,9 +4547,7 @@ impl MilestoneEscrow {
         if caller != meta.client && caller != meta.freelancer {
             return Err(Error::Unauthorized);
         }
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
 
         // Boundary guard: cancelling against an empty escrow has no funds
         // to resolve, so block processing until the contract holds a
@@ -4549,14 +4730,15 @@ impl MilestoneEscrow {
         }
 
         let meta = Self::load_job_meta(&env)?;
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
 
         // Walk every milestone; accumulate remaining balance and mark Released.
         let mut total_released: i128 = 0;
         for index in 0..meta.milestone_count {
             let mut milestone = Self::load_milestone(&env, index)?;
+            if !Self::milestone_is_funded(&meta, &milestone) {
+                continue;
+            }
             if milestone.status == MilestoneStatus::Released
                 || milestone.status == MilestoneStatus::Refunded
             {
@@ -4656,14 +4838,15 @@ impl MilestoneEscrow {
         }
 
         let meta = Self::load_job_meta(&env)?;
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
 
         // Walk every milestone; accumulate remaining balance and mark Refunded.
         let mut total_refunded: i128 = 0;
         for index in 0..meta.milestone_count {
             let mut milestone = Self::load_milestone(&env, index)?;
+            if !Self::milestone_is_funded(&meta, &milestone) {
+                continue;
+            }
             if milestone.status == MilestoneStatus::Released
                 || milestone.status == MilestoneStatus::Refunded
             {
@@ -7501,14 +7684,13 @@ impl MilestoneEscrow {
         Self::require_admin(&env, &admin)?;
 
         let meta = Self::load_job_meta(&env)?;
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
         if milestone_index >= meta.milestone_count {
             return Err(Error::InvalidMilestone);
         }
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        Self::require_milestone_is_funded(&env, &meta, &milestone)?;
 
         // Terminal states have already settled funds — no double-spend.
         if milestone.status == MilestoneStatus::Released
@@ -7609,14 +7791,13 @@ impl MilestoneEscrow {
         Self::assert_not_paused(&env)?;
 
         let meta = Self::load_job_meta(&env)?;
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
         if milestone_index >= meta.milestone_count {
             return Err(Error::InvalidMilestone);
         }
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        Self::require_milestone_is_funded(&env, &meta, &milestone)?;
 
         if milestone.status == MilestoneStatus::Released
             || milestone.status == MilestoneStatus::Refunded
@@ -7712,14 +7893,13 @@ impl MilestoneEscrow {
         Self::require_admin(&env, &admin)?;
 
         let meta = Self::load_job_meta(&env)?;
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
         if milestone_index >= meta.milestone_count {
             return Err(Error::InvalidMilestone);
         }
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        Self::require_milestone_is_funded(&env, &meta, &milestone)?;
         if milestone.status != MilestoneStatus::Disputed {
             return Err(Error::InvalidStatus);
         }
@@ -7962,9 +8142,7 @@ impl MilestoneEscrow {
         meta.client.require_auth();
         meta.freelancer.require_auth();
 
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
         if milestone_index >= meta.milestone_count {
             return Err(Error::InvalidMilestone);
         }
@@ -8249,9 +8427,7 @@ impl MilestoneEscrow {
         Self::require_admin(&env, &admin)?;
 
         let meta = Self::load_job_meta(&env)?;
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
         if milestone_index >= meta.milestone_count {
             return Err(Error::InvalidMilestone);
         }
@@ -8263,6 +8439,7 @@ impl MilestoneEscrow {
             .ok_or(Error::InvalidStatus)?;
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        Self::require_milestone_is_funded(&env, &meta, &milestone)?;
         if milestone.status == MilestoneStatus::Released
             || milestone.status == MilestoneStatus::Refunded
         {
@@ -8335,14 +8512,13 @@ impl MilestoneEscrow {
             .ok_or(Error::InvalidStatus)?;
 
         let meta = Self::load_job_meta(&env)?;
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
         if milestone_index >= meta.milestone_count {
             return Err(Error::InvalidMilestone);
         }
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        Self::require_milestone_is_funded(&env, &meta, &milestone)?;
         if milestone.status == MilestoneStatus::Released
             || milestone.status == MilestoneStatus::Refunded
         {
@@ -8429,14 +8605,13 @@ impl MilestoneEscrow {
             .ok_or(Error::InvalidStatus)?;
 
         let meta = Self::load_job_meta(&env)?;
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
         if milestone_index >= meta.milestone_count {
             return Err(Error::InvalidMilestone);
         }
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        Self::require_milestone_is_funded(&env, &meta, &milestone)?;
         if milestone.status == MilestoneStatus::Released
             || milestone.status == MilestoneStatus::Refunded
         {
@@ -8598,9 +8773,7 @@ impl MilestoneEscrow {
         Self::require_admin(&env, &admin)?;
 
         let meta = Self::load_job_meta(&env)?;
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
 
         // Precondition guards: reject illegal source states (out-of-range
         // milestone, non-positive milestone amount, tax rate above full scale,
@@ -8742,14 +8915,13 @@ impl MilestoneEscrow {
         }
 
         let meta = Self::load_job_meta(&env)?;
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
         if milestone_index >= meta.milestone_count {
             return Err(Error::InvalidMilestone);
         }
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        Self::require_milestone_is_funded(&env, &meta, &milestone)?;
 
         // Terminal states have already settled funds — no double-spend.
         if milestone.status == MilestoneStatus::Released
@@ -8872,14 +9044,13 @@ impl MilestoneEscrow {
         }
 
         let meta = Self::load_job_meta(&env)?;
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
         if milestone_index >= meta.milestone_count {
             return Err(Error::InvalidMilestone);
         }
 
         let mut milestone = Self::load_milestone(&env, milestone_index)?;
+        Self::require_milestone_is_funded(&env, &meta, &milestone)?;
 
         if milestone.status == MilestoneStatus::Released
             || milestone.status == MilestoneStatus::Refunded
@@ -9334,9 +9505,7 @@ impl MilestoneEscrow {
         }
 
         let meta = Self::load_job_meta(&env)?;
-        if !meta.funded {
-            return Err(Error::NotFunded);
-        }
+        Self::require_escrow_has_funding(&env, &meta)?;
         Self::assert_nonzero_balance(&env, &meta)?;
 
         let allocation =
