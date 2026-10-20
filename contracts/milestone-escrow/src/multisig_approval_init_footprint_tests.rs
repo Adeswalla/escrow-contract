@@ -176,6 +176,8 @@ fn funded_escrow(env: &Env) -> (Address, Address, MilestoneEscrowClient<'_>) {
         &604_800u64,
         &vec![env, 1_000_i128],
     );
+    escrow.accept_job(&freelancer_addr);
+    escrow.accept_arbiter(&arbiter_addr);
     escrow.fund(&client_addr);
 
     (contract_id, admin, escrow)

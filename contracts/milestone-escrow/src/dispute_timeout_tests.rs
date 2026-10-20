@@ -34,6 +34,8 @@ fn custom_timeout_escrow(
         &timeout_seconds,
         &amounts,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     client.fund(&client_addr);
     client.mark_delivered(&freelancer_addr, &0);
     (

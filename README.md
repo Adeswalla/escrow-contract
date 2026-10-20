@@ -35,6 +35,12 @@ Disputed → Released (arbiter favors freelancer)
 
 → Refunded (arbiter favors client)
 
+The full state machine, including every entry point, its required signers and the escrow-level locks, is specified in [`contracts/milestone-escrow/SPEC.md`](contracts/milestone-escrow/SPEC.md).
+
+## Security
+
+Roles, trust assumptions, admin powers and known risks are described in [`THREAT_MODEL.md`](THREAT_MODEL.md).
+
 ## Prerequisites
 
 - https://rustup.rs/ (the toolchain is pinned to 1.96.0 by `rust-toolchain.toml`)

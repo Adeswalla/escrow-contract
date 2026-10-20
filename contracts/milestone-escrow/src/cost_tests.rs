@@ -38,15 +38,17 @@ struct Cost {
 /// max write bytes). Recorded from the current baselines (#764): write entries
 /// are exact, so an extra storage write fails the test; instructions and write
 /// bytes allow ~10% headroom for incidental changes. Raise a budget only with
-/// a reason in the PR.
+/// a reason in the PR. Last re-baselined after the dispute timeout (#784),
+/// per-milestone funding (#766) and job acceptance (#757) checks landed; no
+/// flow gained a ledger write.
 const BUDGETS: [(&str, i64, u32, u32); 7] = [
-    ("initialize", 225_000, 6, 1_660),
-    ("fund", 322_000, 4, 1_320),
-    ("mark_delivered", 167_000, 3, 495),
-    ("approve_milestone", 424_000, 7, 1_285),
-    ("claim_auto_release", 438_000, 6, 1_165),
-    ("raise_dispute", 238_000, 5, 700),
-    ("resolve_dispute", 476_000, 7, 1_165),
+    ("initialize", 235_000, 6, 1_755),
+    ("fund", 362_000, 4, 1_470),
+    ("mark_delivered", 192_000, 3, 520),
+    ("approve_milestone", 448_000, 7, 1_315),
+    ("claim_auto_release", 471_000, 6, 1_190),
+    ("raise_dispute", 274_000, 5, 730),
+    ("resolve_dispute", 510_000, 7, 1_190),
 ];
 
 fn fixture(env: &Env) -> Fixture<'_> {
@@ -85,6 +87,10 @@ fn initialize(fixture: &Fixture<'_>, env: &Env) {
 }
 
 fn fund(fixture: &Fixture<'_>) {
+    // Delivery and disputes require both acceptances (#757); they are separate
+    // invocations, so they do not count toward the measured fund cost.
+    fixture.escrow.accept_job(&fixture.freelancer_addr);
+    fixture.escrow.accept_arbiter(&fixture.arbiter_addr);
     fixture.escrow.fund(&fixture.client_addr);
 }
 
@@ -199,6 +205,10 @@ fn main_entrypoint_cost_baselines() {
             cost.write_entries,
             cost.write_bytes
         );
+    }
+
+    // Print the whole table before checking, so a failure shows every flow.
+    for cost in costs {
         assert!(cost.instructions > 0, "{} was not metered", cost.name);
         let (_, max_instructions, max_write_entries, max_write_bytes) = BUDGETS
             .iter()

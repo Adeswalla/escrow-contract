@@ -106,6 +106,8 @@ fn fixture(env: &Env, client_bps: u32, freelancer_bps: u32, treasury_bps: u32) -
         &604_800u64,
         &milestones,
     );
+    escrow.accept_job(&freelancer_addr);
+    escrow.accept_arbiter(&arbiter_addr);
     escrow.fund(&client_addr);
     escrow.set_platform_fee_allocation(&admin, &client_bps, &freelancer_bps, &treasury_bps);
 
