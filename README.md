@@ -69,6 +69,8 @@ cargo test -p milestone-escrow
 
 ## Project Status
 
+- Mainnet release gates are tracked in the [mainnet readiness checklist](MAINNET.md)
+- The admin authorization direction and migration decision are recorded in [ADMIN_MULTISIG_DECISION.md](ADMIN_MULTISIG_DECISION.md)
 - Contract implementation completed in `contracts/milestone-escrow`
 - Includes milestone delivery, approval, dispute, and arbitration flows
 - Initialize now rejects empty milestone lists, zero/negative amounts, zero addresses, and zero auto-release windows with explicit contract errors
