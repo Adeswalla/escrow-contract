@@ -37,6 +37,8 @@ fn setup_unfunded(
         &amounts,
         &mode,
     );
+    client.accept_job(&freelancer_addr);
+    client.accept_arbiter(&arbiter_addr);
     (
         client_addr,
         freelancer_addr,

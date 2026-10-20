@@ -101,6 +101,8 @@ fn multisig_escrow(
         &vec![env, 1_000_i128],
     );
     if fund {
+        escrow.accept_job(&freelancer_addr);
+        escrow.accept_arbiter(&arbiter_addr);
         escrow.fund(&client_addr);
     }
 
