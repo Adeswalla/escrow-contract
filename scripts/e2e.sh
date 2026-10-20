@@ -96,7 +96,8 @@ invoke admin initialize \
   --arbiter "${ARBITER}" \
   --token "${TOKEN_ID}" \
   --auto_release_seconds 604800 \
-  --milestone_amounts '["1000000"]'
+  --milestone_amounts '["1000000"]' \
+  --milestone_spec_hashes '["0000000000000000000000000000000000000000000000000000000000000000"]'
 
 log "Minting test tokens to the client"
 stellar contract invoke \

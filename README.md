@@ -10,7 +10,7 @@ This contract allows a client to fund a job broken into milestones. Funds are lo
 
 | Function | Caller | Description |
 |---|---|---|
-| `initialize` | Anyone | Set up job with a 30-day dispute timeout (Upfront funding) |
+| `initialize` | Anyone | Set up job with milestone amounts and spec hashes, a 30-day dispute timeout and Upfront funding |
 | `initialize_with_dispute_timeout` | Anyone | Set up job with a custom, non-zero dispute timeout |
 | `initialize_with_funding_mode` | Anyone | Set up job with Upfront or PerMilestone funding |
 | `fund` | Client | Deposit total amount into contract (Upfront mode) |

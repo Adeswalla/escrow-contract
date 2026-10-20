@@ -50,7 +50,6 @@ row here, and a row here must correspond to a topic in the source.
 | `arbsplit` | `ArbitrationSplitAppliedEvent`   | calculation       |
 | `msiginit` | `MultisigApprovalInitEvent`      | state change      |
 | `msigappr` | `MultiSigApprovedEvent`          | state change      |
-| `msigtrx`  | `MultiSigTransferAdminEvent`     | state change      |
 | `mslock`   | `MultisigLockedEvent`            | state change      |
 | `msadmrel` | `MultisigAdminOverrideReleaseEvent` | state change   |
 | `msadmref` | `MultisigAdminOverrideRefundEvent`  | state change   |
