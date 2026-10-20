@@ -15659,3 +15659,228 @@ fn test_raise_dispute_by_freelancer_on_delivered_milestone_succeeds() {
         "freelancer should be able to raise a dispute on a Delivered milestone"
     );
 }
+
+// ============================================================================
+// initialize — party-distinctness validation (issue #667)
+//
+// The escrow's protection depends on four independent roles: admin
+// (platform), client, freelancer, and arbiter (neutral dispute resolver).
+// Any collision among these addresses removes a check-and-balance:
+//   - admin == client  → client holds every admin override
+//   - admin == freelancer → freelancer holds every admin override
+//   - arbiter == client → client resolves their own disputes
+//   - arbiter == freelancer → freelancer resolves their own disputes
+//   - client == freelancer → meaningless escrow (same party on both sides)
+//
+// Each forbidden combination must return Error::InvalidParties.  A valid
+// initialization with four distinct addresses must still succeed.
+// ============================================================================
+
+/// Helper: set up a fresh env and return the addresses + client needed by
+/// the party-distinctness tests.  The addresses are all distinct by default;
+/// individual tests override the ones they want to collide.
+fn party_distinctness_setup(
+    env: &Env,
+) -> (
+    Address,
+    Address,
+    Address,
+    Address,
+    Address,
+    MilestoneEscrowClient<'_>,
+) {
+    env.mock_all_auths();
+
+    let admin_addr = Address::generate(env);
+    let client_addr = Address::generate(env);
+    let freelancer_addr = Address::generate(env);
+    let arbiter_addr = Address::generate(env);
+
+    let token_contract_id = env
+        .register_stellar_asset_contract_v2(admin_addr.clone())
+        .address();
+
+    let contract_id = env.register(MilestoneEscrow, ());
+    let client = MilestoneEscrowClient::new(env, &contract_id);
+
+    (
+        admin_addr,
+        client_addr,
+        freelancer_addr,
+        arbiter_addr,
+        token_contract_id,
+        client,
+    )
+}
+
+/// Forbidden combo 1 — admin == client:
+/// The client must not also be the admin, or it holds every admin override
+/// (admin_override_refund, admin_override_cancel_refund,
+/// emergency_pause_admin_override, upgrade) and can redirect escrowed funds
+/// at will.
+#[test]
+fn test_initialize_admin_equals_client_fails() {
+    let env = Env::default();
+    let (_admin, client_addr, freelancer_addr, arbiter_addr, token_contract_id, client) =
+        party_distinctness_setup(&env);
+
+    let same = client_addr.clone();
+    let amounts = vec![&env, 1_000_i128];
+    let result = client.try_initialize(
+        &same,
+        &client_addr,
+        &freelancer_addr,
+        &arbiter_addr,
+        &token_contract_id,
+        &604800,
+        &amounts,
+        &crate::spec_hashes_for(&amounts),
+    );
+    assert_eq!(
+        result,
+        Err(Ok(Error::InvalidParties)),
+        "admin == client must return InvalidParties"
+    );
+}
+
+/// Forbidden combo 2 — admin == freelancer:
+/// The freelancer must not also be the admin, or it holds every admin
+/// override and can force-release funds to itself.
+#[test]
+fn test_initialize_admin_equals_freelancer_fails() {
+    let env = Env::default();
+    let (_admin, client_addr, freelancer_addr, arbiter_addr, token_contract_id, client) =
+        party_distinctness_setup(&env);
+
+    let same = freelancer_addr.clone();
+    let amounts = vec![&env, 1_000_i128];
+    let result = client.try_initialize(
+        &same,
+        &client_addr,
+        &freelancer_addr,
+        &arbiter_addr,
+        &token_contract_id,
+        &604800,
+        &amounts,
+        &crate::spec_hashes_for(&amounts),
+    );
+    assert_eq!(
+        result,
+        Err(Ok(Error::InvalidParties)),
+        "admin == freelancer must return InvalidParties"
+    );
+}
+
+/// Forbidden combo 3 — arbiter == client:
+/// The client must not also be the arbiter, or it can resolve its own
+/// disputes and refund itself after work is delivered.
+#[test]
+fn test_initialize_arbiter_equals_client_fails() {
+    let env = Env::default();
+    let (admin_addr, client_addr, freelancer_addr, _arbiter, token_contract_id, client) =
+        party_distinctness_setup(&env);
+
+    let same = client_addr.clone();
+    let amounts = vec![&env, 1_000_i128];
+    let result = client.try_initialize(
+        &admin_addr,
+        &client_addr,
+        &freelancer_addr,
+        &same,
+        &token_contract_id,
+        &604800,
+        &amounts,
+        &crate::spec_hashes_for(&amounts),
+    );
+    assert_eq!(
+        result,
+        Err(Ok(Error::InvalidParties)),
+        "arbiter == client must return InvalidParties"
+    );
+}
+
+/// Forbidden combo 4 — arbiter == freelancer:
+/// The freelancer must not also be the arbiter, or it can resolve disputes
+/// in its own favour and release funds to itself.
+#[test]
+fn test_initialize_arbiter_equals_freelancer_fails() {
+    let env = Env::default();
+    let (admin_addr, client_addr, freelancer_addr, _arbiter, token_contract_id, client) =
+        party_distinctness_setup(&env);
+
+    let same = freelancer_addr.clone();
+    let amounts = vec![&env, 1_000_i128];
+    let result = client.try_initialize(
+        &admin_addr,
+        &client_addr,
+        &freelancer_addr,
+        &same,
+        &token_contract_id,
+        &604800,
+        &amounts,
+        &crate::spec_hashes_for(&amounts),
+    );
+    assert_eq!(
+        result,
+        Err(Ok(Error::InvalidParties)),
+        "arbiter == freelancer must return InvalidParties"
+    );
+}
+
+/// Forbidden combo 5 — client == freelancer:
+/// The client and freelancer must be distinct; a self-escrow is meaningless
+/// and provides no protection to either party.
+#[test]
+fn test_initialize_client_equals_freelancer_fails() {
+    let env = Env::default();
+    let (admin_addr, client_addr, _freelancer, arbiter_addr, token_contract_id, client) =
+        party_distinctness_setup(&env);
+
+    let same = client_addr.clone();
+    let amounts = vec![&env, 1_000_i128];
+    let result = client.try_initialize(
+        &admin_addr,
+        &client_addr,
+        &same,
+        &arbiter_addr,
+        &token_contract_id,
+        &604800,
+        &amounts,
+        &crate::spec_hashes_for(&amounts),
+    );
+    assert_eq!(
+        result,
+        Err(Ok(Error::InvalidParties)),
+        "client == freelancer must return InvalidParties"
+    );
+}
+
+/// Valid case — four distinct addresses:
+/// An initialization with four genuinely distinct addresses (admin, client,
+/// freelancer, arbiter) must still succeed, confirming the new check does
+/// not reject legitimate configurations.
+#[test]
+fn test_initialize_four_distinct_addresses_succeeds() {
+    let env = Env::default();
+    let (admin_addr, client_addr, freelancer_addr, arbiter_addr, token_contract_id, client) =
+        party_distinctness_setup(&env);
+
+    let amounts = vec![&env, 1_000_i128];
+    let result = client.try_initialize(
+        &admin_addr,
+        &client_addr,
+        &freelancer_addr,
+        &arbiter_addr,
+        &token_contract_id,
+        &604800,
+        &amounts,
+        &crate::spec_hashes_for(&amounts),
+    );
+    assert_eq!(result, Ok(Ok(())), "four distinct addresses must succeed");
+
+    // Verify the parties were stored correctly.
+    let job = client.get_job();
+    assert_eq!(job.client, client_addr);
+    assert_eq!(job.freelancer, freelancer_addr);
+    assert_eq!(job.arbiter, arbiter_addr);
+}
