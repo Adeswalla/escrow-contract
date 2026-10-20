@@ -24,6 +24,28 @@ Follow Rust's standard code style and use `cargo fmt` before committing:
 cargo fmt
 ```
 
+## End-to-end tests
+
+Unit tests run against the Soroban test host (`cargo test`). For a full
+integration check, `scripts/e2e.sh` builds the contract, deploys it to a
+throwaway local Stellar network (Docker required) and exercises the funded →
+delivered → dispute → refund lifecycle:
+
+```bash
+bash scripts/e2e.sh
+```
+
+It requires `cargo`, `docker`, and the `stellar` CLI. The same script runs
+nightly (and on demand) via the `E2E` GitHub Actions workflow.
+
+## Documentation requirements
+
+Two references are checked in CI and must stay in sync with the contract:
+
+- `SPEC.md` describes milestone states and dispute semantics.
+- `EVENTS.md` lists every emitted event topic; the `event_docs_sync_tests`
+  module fails if a `symbol_short!` topic is added without a matching row.
+
 ## Submitting Changes
 
 1. Commit your changes with a clear, descriptive message: `git commit -m "feat: add XYZ functionality"`
