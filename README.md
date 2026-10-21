@@ -36,6 +36,24 @@ The escrow's protection depends on **four distinct roles** assigned at `initiali
 | `sweep_excess` | Client or admin | Recover surplus tokens not backing obligations |
 | `emergency_unpause_parties` | Client and freelancer | Jointly lift a party-initiated pause |
 
+## Event topics
+
+Each event keeps its current event name in topic[0]. The following addresses
+are indexed in subsequent topics, in this order:
+
+| Event | Topic layout |
+|---|---|
+| `init` | `init`, client, freelancer, arbiter |
+| `fund` | `fund`, client, freelancer, arbiter |
+| `deliver` | `deliver`, freelancer |
+| `claim` | `claim`, freelancer |
+| `approve` | `approve`, client |
+| `dispute` | `dispute`, caller |
+
+The backend's by-wallet query can use these topics to retrieve relevant escrow
+events without scanning all event payloads. See the [backend by-wallet follow-up
+issue](https://github.com/Goldii-locks/escrow-backend/issues/1).
+
 ## Milestone States
 
 Pending → Delivered → Released
@@ -103,17 +121,44 @@ cargo test -p milestone-escrow
 
 ## Deploy (Testnet)
 
+Configure `stellar-cli` with a funded testnet source account and set these
+environment variables before running the script:
+
+| Variable | Meaning |
+|---|---|
+| `SOURCE_ACCOUNT` | `stellar-cli` key name used to sign and pay for upload/deploy/initialize |
+| `ADMIN_ADDRESS` | Stellar address that will be the escrow admin |
+| `CLIENT_ADDRESS` | Client Stellar address |
+| `FREELANCER_ADDRESS` | Freelancer Stellar address |
+| `ARBITER_ADDRESS` | Arbiter Stellar address |
+| `TOKEN_ADDRESS` | Token contract ID accepted by the escrow |
+| `AUTO_RELEASE_SECONDS` | Positive auto-release interval in seconds |
+| `MILESTONE_AMOUNTS` | JSON array of positive integer token amounts, for example `["10000000","25000000"]` |
+| `MILESTONE_SPEC_HASHES` | JSON array of 32-byte hex hashes, one for each milestone, for example `["0123...cdef"]` (each value must be exactly 64 hex characters) |
+
+The four party addresses must be valid and distinct. Amounts use the token's
+smallest unit. `SOURCE_ACCOUNT` must be funded on testnet and available to
+`stellar-cli`; the admin address can be a different account.
+
 ```bash
-scripts/build-reproducible.sh
-stellar contract deploy \
-  --wasm dist/milestone_escrow.wasm \
-  --network testnet \
-  --source <your-account>
+export SOURCE_ACCOUNT=testnet-deployer
+export ADMIN_ADDRESS=G...
+export CLIENT_ADDRESS=G...
+export FREELANCER_ADDRESS=G...
+export ARBITER_ADDRESS=G...
+export TOKEN_ADDRESS=C...
+export AUTO_RELEASE_SECONDS=2592000
+export MILESTONE_AMOUNTS='["10000000"]'
+export MILESTONE_SPEC_HASHES='["0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"]'
+scripts/deploy-testnet.sh
 ```
 
-Then record the contract ID, `source_commit` and `wasm_sha256` from
-`dist/build-info.json` in `deployments/<network>.json`, and the hash in
-`CHANGELOG.md`.
+The script builds with the pinned reproducible toolchain, uploads the wasm,
+prints its on-chain hash, deploys and initializes the contract, then appends
+the date, network, wasm hash, contract ID, and admin address to
+`deployments/testnet.json`. Review and commit that deployment record after a
+successful run. The detailed source commit and build tool versions remain in
+`dist/build-info.json`.
 
 After upgrading an existing deployment to this version, the admin should call
 `migrate_cold_config` once to move the whitelist, multisig, yield and fee

@@ -2,7 +2,7 @@
 use super::*;
 use soroban_sdk::{
     contract, contractimpl, contracttype, testutils::Address as _, testutils::EnvTestConfig,
-    testutils::Ledger, vec, Address, Env, FromVal, IntoVal, Symbol, TryIntoVal, Val,
+    testutils::Ledger, vec, Address, Env, FromVal, IntoVal, Map, Symbol, TryIntoVal, Val,
 };
 
 mod admin_accrue_yield_footprint_tests;
@@ -28,10 +28,13 @@ mod emergency_pause_allocation_guards_tests;
 mod emergency_pause_split_refund_tests;
 mod emergency_pause_test;
 mod event_docs_sync_tests;
+mod event_topic_tests;
 mod execute_admin_transfer_tests;
+mod freelancer_rotation_tests;
 mod funding_mode_tests;
 mod get_escrow_interest_yield_no_mutation_tests;
 mod get_job_no_mutation_tests;
+mod get_milestone_no_mutation_tests;
 mod get_pending_admin_transfer_read_count_tests;
 mod get_pending_admin_transfer_tests;
 mod get_platform_fee_allocation_not_initialized_tests;
@@ -1676,20 +1679,76 @@ fn test_fund_emits_structured_event() {
         if let Some(topic) = event.1.get(0) {
             if topic.get_payload() == fund_topic_val.get_payload() {
                 fund_events += 1;
-                assert_eq!(event.1.len(), 1);
+                assert_eq!(event.1.len(), 4);
+                let data: Map<Symbol, Val> = event.2.try_into_val(&env).unwrap();
                 assert_eq!(
-                    FundedEvent::from_val(&env, &event.2),
-                    FundedEvent {
-                        contract_id: contract_id.clone(),
-                        client: client_addr.clone(),
-                        freelancer: freelancer_addr.clone(),
-                        arbiter: arbiter_addr.clone(),
-                        token: token_contract_id.clone(),
-                        total_amount: 3_000,
-                        milestone_count: 2,
-                        auto_release_seconds: 604800,
-                        funded: true,
-                    }
+                    data.get(symbol_short!("contract_id"))
+                        .unwrap()
+                        .try_into_val::<Address>(&env)
+                        .unwrap(),
+                    contract_id
+                );
+                assert_eq!(
+                    data.get(symbol_short!("token"))
+                        .unwrap()
+                        .try_into_val::<Address>(&env)
+                        .unwrap(),
+                    token_contract_id
+                );
+                assert_eq!(
+                    data.get(symbol_short!("total_amount"))
+                        .unwrap()
+                        .try_into_val::<i128>(&env)
+                        .unwrap(),
+                    3_000
+                );
+                assert_eq!(
+                    data.get(symbol_short!("milestone_count"))
+                        .unwrap()
+                        .try_into_val::<u32>(&env)
+                        .unwrap(),
+                    2
+                );
+                assert_eq!(
+                    data.get(symbol_short!("auto_release_seconds"))
+                        .unwrap()
+                        .try_into_val::<u64>(&env)
+                        .unwrap(),
+                    604800
+                );
+                assert_eq!(
+                    data.get(symbol_short!("funded"))
+                        .unwrap()
+                        .try_into_val::<bool>(&env)
+                        .unwrap(),
+                    true
+                );
+                assert_eq!(
+                    event
+                        .1
+                        .get(1)
+                        .unwrap()
+                        .try_into_val::<Address>(&env)
+                        .unwrap(),
+                    client_addr
+                );
+                assert_eq!(
+                    event
+                        .1
+                        .get(2)
+                        .unwrap()
+                        .try_into_val::<Address>(&env)
+                        .unwrap(),
+                    freelancer_addr
+                );
+                assert_eq!(
+                    event
+                        .1
+                        .get(3)
+                        .unwrap()
+                        .try_into_val::<Address>(&env)
+                        .unwrap(),
+                    arbiter_addr
                 );
             }
         }
@@ -6164,9 +6223,23 @@ fn test_initialize_event_includes_admin_and_creation_time() {
     );
 
     let events = crate::all_event_tuples(&env);
-    let event = InitializedEvent::from_val(&env, &events.last().unwrap().2);
-    assert_eq!(event.admin, admin_addr);
-    assert_eq!(event.created_at, created_at);
+    let event_data: Map<Symbol, Val> = events.last().unwrap().2.try_into_val(&env).unwrap();
+    assert_eq!(
+        event_data
+            .get(symbol_short!("admin"))
+            .unwrap()
+            .try_into_val::<Address>(&env)
+            .unwrap(),
+        admin_addr
+    );
+    assert_eq!(
+        event_data
+            .get(symbol_short!("created_at"))
+            .unwrap()
+            .try_into_val::<u64>(&env)
+            .unwrap(),
+        created_at
+    );
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use super::*;
-use soroban_sdk::{symbol_short, FromVal, TryIntoVal};
+use soroban_sdk::{symbol_short, Map, Symbol, TryIntoVal, Val};
 
 fn custom_timeout_escrow(
     env: &Env,
@@ -48,7 +48,7 @@ fn custom_timeout_escrow(
     )
 }
 
-fn last_dispute_raised_event(env: &Env) -> DisputeRaisedEvent {
+fn last_dispute_raised_event(env: &Env) -> Map<Symbol, Val> {
     let event = crate::all_event_tuples(env)
         .into_iter()
         .find(|event| {
@@ -58,7 +58,7 @@ fn last_dispute_raised_event(env: &Env) -> DisputeRaisedEvent {
             }) == Some(symbol_short!("dispute"))
         })
         .unwrap();
-    DisputeRaisedEvent::from_val(env, &event.2)
+    event.2.try_into_val(env).unwrap()
 }
 
 #[test]
@@ -72,8 +72,22 @@ fn escalation_fails_before_timeout_and_restores_delivered_after_timeout() {
     client.raise_dispute(&client_addr, &0);
 
     let raised = last_dispute_raised_event(&env);
-    assert_eq!(raised.disputed_at, 1_100);
-    assert_eq!(raised.new_status, MilestoneStatus::Disputed);
+    assert_eq!(
+        raised
+            .get(symbol_short!("disputed_at"))
+            .unwrap()
+            .try_into_val::<u64>(&env)
+            .unwrap(),
+        1_100
+    );
+    assert_eq!(
+        raised
+            .get(symbol_short!("new_status"))
+            .unwrap()
+            .try_into_val::<MilestoneStatus>(&env)
+            .unwrap(),
+        MilestoneStatus::Disputed
+    );
 
     env.ledger().set_timestamp(1_159);
     assert_eq!(

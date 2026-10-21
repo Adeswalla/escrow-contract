@@ -1,8 +1,8 @@
 #![cfg(test)]
-use crate::{Error, InitializedEvent, MilestoneEscrow, MilestoneEscrowClient};
+use crate::{Error, MilestoneEscrow, MilestoneEscrowClient};
 use soroban_sdk::{
     symbol_short, testutils::Address as _, testutils::EnvTestConfig, vec, Address, BytesN, Env,
-    FromVal, IntoVal, Val,
+    IntoVal, Map, Symbol, TryIntoVal, Val,
 };
 
 fn test_env() -> Env {
@@ -56,8 +56,13 @@ fn initialize_persists_and_emits_milestone_spec_hashes() {
                 .is_some_and(|t| t.get_payload() == init_topic.get_payload())
         })
         .expect("initialize emits an init event");
-    let event = InitializedEvent::from_val(&env, &init.2);
-    assert_eq!(event.milestone_spec_hashes, hashes);
+    let event_data: Map<Symbol, Val> = init.2.try_into_val(&env).unwrap();
+    let emitted_hashes: Vec<BytesN<32>> = event_data
+        .get(symbol_short!("milestone_spec_hashes"))
+        .unwrap()
+        .try_into_val(&env)
+        .unwrap();
+    assert_eq!(emitted_hashes, hashes);
 
     assert_eq!(escrow.get_milestone_spec_hash(&0), first_hash);
     assert_eq!(escrow.get_milestone_spec_hash(&1), second_hash);

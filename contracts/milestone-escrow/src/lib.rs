@@ -8,8 +8,8 @@
 // unconditional, so the lint is disabled here deliberately.
 #![allow(clippy::redundant_closure_call)]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, BytesN,
-    ContractExecutable, Env, IntoVal, Symbol, TryFromVal, Val, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
+    Address, BytesN, ContractExecutable, Env, IntoVal, Symbol, TryFromVal, Val, Vec,
 };
 
 /// Maximum number of ratio slots accepted by `compute_ratio_allocation`.
@@ -488,12 +488,15 @@ pub enum DataKey {
     FundedAt,
 }
 
-#[contracttype]
+#[contractevent(topics = ["init"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InitializedEvent {
     pub admin: Address,
+    #[topic]
     pub client: Address,
+    #[topic]
     pub freelancer: Address,
+    #[topic]
     pub arbiter: Address,
     pub token: Address,
     pub auto_release_seconds: u64,
@@ -512,12 +515,15 @@ pub struct ExcessSweptEvent {
     pub recipient: Address,
 }
 
-#[contracttype]
+#[contractevent(topics = ["fund"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FundedEvent {
     pub contract_id: Address,
+    #[topic]
     pub client: Address,
+    #[topic]
     pub freelancer: Address,
+    #[topic]
     pub arbiter: Address,
     pub token: Address,
     pub total_amount: i128,
@@ -546,11 +552,12 @@ pub struct RevisionRequestedEvent {
     pub revision_count: u32,
 }
 
-#[contracttype]
+#[contractevent(topics = ["deliver"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeliveredEvent {
     pub contract_id: Address,
     pub milestone_index: u32,
+    #[topic]
     pub freelancer: Address,
     pub client: Address,
     pub delivered_at: u64,
@@ -569,11 +576,12 @@ pub struct DeadlineExtendedEvent {
     pub new_deadline: u64,
 }
 
-#[contracttype]
+#[contractevent(topics = ["approve"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApprovedEvent {
     pub contract_id: Address,
     pub milestone_index: u32,
+    #[topic]
     pub client: Address,
     pub freelancer: Address,
     pub arbiter: Address,
@@ -593,10 +601,11 @@ pub struct ApprovedEvent {
     pub auto_release_seconds: u64,
 }
 
-#[contracttype]
+#[contractevent(topics = ["dispute"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisputeRaisedEvent {
     pub milestone_index: u32,
+    #[topic]
     pub caller: Address,
     /// The amount of the milestone being disputed, in stroops.
     pub milestone_amount: i128,
@@ -806,11 +815,12 @@ pub struct EscrowInterestYieldState {
     pub locked: bool,
 }
 
-#[contracttype]
+#[contractevent(topics = ["claim"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClaimedEvent {
     pub contract_id: Address,
     pub milestone_index: u32,
+    #[topic]
     pub freelancer: Address,
     pub token: Address,
     pub amount: i128,
@@ -831,6 +841,15 @@ pub struct JobAcceptedEvent {
     pub contract_id: Address,
     pub party: Address,
     pub acceptance_mask: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FreelancerRotatedEvent {
+    pub contract_id: Address,
+    pub client: Address,
+    pub previous_freelancer: Address,
+    pub new_freelancer: Address,
 }
 
 #[contracttype]
@@ -1520,8 +1539,8 @@ pub type UpgradeEvent = ContractUpgradedEvent;
 #[contract]
 pub struct MilestoneEscrow;
 
-// Deferred pending coordinated migration to #[contractevent] — see
-// escrow-backend's poller.ts, which reads the current event wire format.
+// Event migration is staged: indexed event types keep their topic[0] names,
+// while topic fields move out of the data map and into the topic list.
 #[allow(deprecated)]
 #[contractimpl]
 impl MilestoneEscrow {
@@ -3034,22 +3053,20 @@ impl MilestoneEscrow {
         // Emit a structured initialization event so downstream indexers can
         // record all operational parameters from a single on-chain event without
         // having to query contract storage separately.
-        env.events().publish(
-            (symbol_short!("init"),),
-            InitializedEvent {
-                admin,
-                client: meta.client,
-                freelancer: meta.freelancer,
-                arbiter: meta.arbiter,
-                token: meta.token,
-                auto_release_seconds: meta.auto_release_seconds,
-                milestone_amounts,
-                milestone_spec_hashes,
-                total_amount: meta.total_amount,
-                milestone_count: meta.milestone_count,
-                created_at: meta.created_at,
-            },
-        );
+        InitializedEvent {
+            admin,
+            client: meta.client,
+            freelancer: meta.freelancer,
+            arbiter: meta.arbiter,
+            token: meta.token,
+            auto_release_seconds: meta.auto_release_seconds,
+            milestone_amounts,
+            milestone_spec_hashes,
+            total_amount: meta.total_amount,
+            milestone_count: meta.milestone_count,
+            created_at: meta.created_at,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -3449,20 +3466,18 @@ impl MilestoneEscrow {
         let token_client = token::Client::new(&env, &meta.token);
         token_client.transfer(&client, env.current_contract_address(), &total_amount);
 
-        env.events().publish(
-            (symbol_short!("fund"),),
-            FundedEvent {
-                contract_id: env.current_contract_address(),
-                client,
-                freelancer: meta.freelancer,
-                arbiter: meta.arbiter,
-                token: meta.token,
-                total_amount,
-                milestone_count: meta.milestone_count,
-                auto_release_seconds: meta.auto_release_seconds,
-                funded: meta.funded,
-            },
-        );
+        FundedEvent {
+            contract_id: env.current_contract_address(),
+            client,
+            freelancer: meta.freelancer,
+            arbiter: meta.arbiter,
+            token: meta.token,
+            total_amount,
+            milestone_count: meta.milestone_count,
+            auto_release_seconds: meta.auto_release_seconds,
+            funded: meta.funded,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -3582,6 +3597,50 @@ impl MilestoneEscrow {
             return Err(Error::Unauthorized);
         }
         Self::record_acceptance(&env, arbiter, 2, symbol_short!("acceptarb"))
+    }
+
+    /// Rotate the freelancer identity and payout destination for this escrow.
+    /// Both the currently registered freelancer and the client must authorize
+    /// the transaction. The new address becomes the identity checked by future
+    /// freelancer-only methods and the recipient of future payouts.
+    ///
+    /// # Errors
+    /// * `NotInitialized` â€“ Job metadata has not been initialized.
+    /// * `InvalidAddress` â€“ `new_freelancer` is a zero address, this contract,
+    ///   or the currently registered freelancer.
+    /// * `InvalidParties` â€“ `new_freelancer` collides with the client, arbiter,
+    ///   or admin.
+    pub fn rotate_freelancer(env: Env, new_freelancer: Address) -> Result<(), Error> {
+        let mut meta = Self::require_client_and_freelancer_consent(&env)?;
+        Self::validate_address(&env, &new_freelancer)?;
+
+        if new_freelancer == meta.freelancer {
+            return Err(Error::InvalidAddress);
+        }
+
+        let admin = Self::load_admin(&env)?;
+        if new_freelancer == meta.client
+            || new_freelancer == meta.arbiter
+            || new_freelancer == admin
+        {
+            return Err(Error::InvalidParties);
+        }
+
+        let previous_freelancer = meta.freelancer.clone();
+        meta.freelancer = new_freelancer.clone();
+        Self::store_job_meta(&env, &meta);
+
+        env.events().publish(
+            (symbol_short!("freerot"),),
+            FreelancerRotatedEvent {
+                contract_id: env.current_contract_address(),
+                client: meta.client,
+                previous_freelancer,
+                new_freelancer,
+            },
+        );
+
+        Ok(())
     }
 
     /// Refund the client in full when the job was not accepted by both the
@@ -3748,18 +3807,16 @@ impl MilestoneEscrow {
         // optimised temporary tier without touching the persistent Milestone entry.
         Self::store_delivered_at(&env, milestone_index, delivered_at);
 
-        env.events().publish(
-            (symbol_short!("deliver"),),
-            DeliveredEvent {
-                contract_id: env.current_contract_address(),
-                milestone_index,
-                freelancer: meta.freelancer,
-                client: meta.client,
-                delivered_at,
-                status: MilestoneStatus::Delivered,
-                amount: milestone.amount,
-            },
-        );
+        DeliveredEvent {
+            contract_id: env.current_contract_address(),
+            milestone_index,
+            freelancer: meta.freelancer,
+            client: meta.client,
+            delivered_at,
+            status: MilestoneStatus::Delivered,
+            amount: milestone.amount,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -4009,16 +4066,14 @@ impl MilestoneEscrow {
         let token_client = token::Client::new(&env, &meta.token);
         Self::pay_or_credit(&env, &token_client, &meta.freelancer, &remaining)?;
 
-        env.events().publish(
-            (symbol_short!("claim"),),
-            ClaimedEvent {
-                contract_id: env.current_contract_address(),
-                milestone_index,
-                freelancer: meta.freelancer,
-                token: meta.token,
-                amount: remaining,
-            },
-        );
+        ClaimedEvent {
+            contract_id: env.current_contract_address(),
+            milestone_index,
+            freelancer: meta.freelancer,
+            token: meta.token,
+            amount: remaining,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -4181,24 +4236,22 @@ impl MilestoneEscrow {
             .amount
             .checked_sub(updated_milestone.released_amount)
             .ok_or(Error::InvalidAmount)?;
-        env.events().publish(
-            (symbol_short!("approve"),),
-            ApprovedEvent {
-                contract_id: env.current_contract_address(),
-                milestone_index,
-                client: meta.client,
-                freelancer: meta.freelancer,
-                arbiter: meta.arbiter,
-                token: meta.token,
-                amount,
-                released_amount: updated_milestone.released_amount,
-                remaining: event_remaining,
-                status: updated_milestone.status.clone(),
-                milestone_count: meta.milestone_count,
-                total_amount: meta.total_amount,
-                auto_release_seconds: meta.auto_release_seconds,
-            },
-        );
+        ApprovedEvent {
+            contract_id: env.current_contract_address(),
+            milestone_index,
+            client: meta.client,
+            freelancer: meta.freelancer,
+            arbiter: meta.arbiter,
+            token: meta.token,
+            amount,
+            released_amount: updated_milestone.released_amount,
+            remaining: event_remaining,
+            status: updated_milestone.status.clone(),
+            milestone_count: meta.milestone_count,
+            total_amount: meta.total_amount,
+            auto_release_seconds: meta.auto_release_seconds,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -4291,24 +4344,22 @@ impl MilestoneEscrow {
             .checked_sub(milestone.released_amount)
             .ok_or(Error::InvalidAmount)?;
 
-        env.events().publish(
-            (symbol_short!("approve"),),
-            ApprovedEvent {
-                contract_id: env.current_contract_address(),
-                milestone_index,
-                client: meta.client,
-                freelancer: meta.freelancer,
-                arbiter: meta.arbiter,
-                token: meta.token,
-                amount: remaining,
-                released_amount: milestone.released_amount,
-                remaining: event_remaining,
-                status: milestone.status.clone(),
-                milestone_count: meta.milestone_count,
-                total_amount: meta.total_amount,
-                auto_release_seconds: meta.auto_release_seconds,
-            },
-        );
+        ApprovedEvent {
+            contract_id: env.current_contract_address(),
+            milestone_index,
+            client: meta.client,
+            freelancer: meta.freelancer,
+            arbiter: meta.arbiter,
+            token: meta.token,
+            amount: remaining,
+            released_amount: milestone.released_amount,
+            remaining: event_remaining,
+            status: milestone.status.clone(),
+            milestone_count: meta.milestone_count,
+            total_amount: meta.total_amount,
+            auto_release_seconds: meta.auto_release_seconds,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -4499,16 +4550,14 @@ impl MilestoneEscrow {
         // Milestone entry, reducing ledger footprint on the read path.
         Self::store_dispute_flag(env, milestone_index);
 
-        env.events().publish(
-            (symbol_short!("dispute"),),
-            DisputeRaisedEvent {
-                milestone_index,
-                caller,
-                milestone_amount: milestone.amount,
-                disputed_at,
-                new_status: MilestoneStatus::Disputed,
-            },
-        );
+        DisputeRaisedEvent {
+            milestone_index,
+            caller,
+            milestone_amount: milestone.amount,
+            disputed_at,
+            new_status: MilestoneStatus::Disputed,
+        }
+        .publish(env);
 
         Ok(())
     }
@@ -7355,6 +7404,33 @@ impl MilestoneEscrow {
     pub fn get_job(env: Env) -> Result<Job, Error> {
         let meta = Self::load_job_meta(&env)?;
         Self::assemble_job(&env, &meta)
+    }
+
+    /// Return the requested milestone without assembling the rest of the job.
+    ///
+    /// This reads job metadata from contract-instance storage and exactly one
+    /// persistent milestone entry, regardless of the total milestone count.
+    ///
+    /// # Errors
+    /// * `NotInitialized` â€“ Contract has not been initialized.
+    /// * `InvalidMilestone` â€“ `index` is outside the job's milestone range or
+    ///   its persistent entry is missing.
+    pub fn get_milestone(env: Env, index: u32) -> Result<Milestone, Error> {
+        let meta = Self::load_job_meta(&env)?;
+        if index >= meta.milestone_count {
+            return Err(Error::InvalidMilestone);
+        }
+        let mut milestone = Self::load_milestone(&env, index)?;
+        milestone.funded = Self::milestone_is_funded(&meta, &milestone);
+        Ok(milestone)
+    }
+
+    /// Return the number of milestones in the initialized job.
+    ///
+    /// # Errors
+    /// * `NotInitialized` â€“ Contract has not been initialized.
+    pub fn milestone_count(env: Env) -> Result<u32, Error> {
+        Ok(Self::load_job_meta(&env)?.milestone_count)
     }
 
     /// Recover tokens that are not backing outstanding escrow obligations.
